@@ -27,6 +27,12 @@ class GenerationOptionsTests(TestCase):
             self.assertEqual(sum(scene["duration"] for scene in scenes), duration)
             self.assertEqual([scene["scene_number"] for scene in scenes], list(range(1, len(scenes) + 1)))
 
+    def test_scene_plan_uses_short_ai_video_clips(self):
+        for duration in (10, 30, 60):
+            scenes = build_scene_plan("A farmer walks with his buffalo.", duration)
+            self.assertTrue(all(1 <= scene["duration"] <= 15 for scene in scenes))
+            self.assertEqual(len(scenes), {10: 2, 30: 5, 60: 10}[duration])
+
 
 class CharacterSceneModelTests(TestCase):
     def test_character_and_scene_are_linked_to_project(self):
@@ -87,12 +93,44 @@ class ProjectPlanningAPITests(TestCase):
         response = VideoProjectCreateView.as_view()(request)
         self.assertEqual(response.status_code, 400)
 
+    def test_every_planned_scene_contains_all_recurring_characters(self):
+        factory = APIRequestFactory()
+        request = factory.post(
+            "/projects/",
+            {
+                "title": "Farmer Story",
+                "prompt": "A farmer talks to his friend.",
+                "duration": 30,
+                "aspect_ratio": "9:16",
+                "characters": [
+                    {"name": "Farmer", "appearance": "friendly farmer"},
+                    {"name": "Friend", "appearance": "friendly village friend"},
+                ],
+            },
+            format="json",
+        )
+        response = VideoProjectCreateView.as_view()(request)
+        self.assertEqual(response.status_code, 201)
+        project = VideoProject.objects.get(id=response.data["id"])
+        self.assertEqual(project.scenes.count(), 5)
+        self.assertTrue(all(scene.characters.count() == 2 for scene in project.scenes.all()))
+
 
 class PixVerseProviderValidationTests(TestCase):
     def test_reference_is_required(self):
         provider = object.__new__(FalPixVerseC1Provider)
         with self.assertRaises(VideoProviderError):
             provider._arguments(prompt="walk", duration=5, aspect_ratio="9:16", reference_image_url=None)
+
+    def test_scene_duration_is_limited_to_provider_range(self):
+        provider = object.__new__(FalPixVerseC1Provider)
+        with self.assertRaises(VideoProviderError):
+            provider._arguments(
+                prompt="walk",
+                duration=16,
+                aspect_ratio="9:16",
+                references=[{"image_url": "https://example.com/farmer.png", "ref_name": "character1"}],
+            )
 
     def test_prompt_references_character(self):
         provider = object.__new__(FalPixVerseC1Provider)
@@ -104,3 +142,19 @@ class PixVerseProviderValidationTests(TestCase):
         )
         self.assertIn("@character", args["prompt"])
         self.assertEqual(args["image_references"][0]["type"], "subject")
+
+    def test_multiple_character_references_are_preserved(self):
+        provider = object.__new__(FalPixVerseC1Provider)
+        references = [
+            {"image_url": "https://example.com/farmer.png", "type": "subject", "ref_name": "character1"},
+            {"image_url": "https://example.com/friend.png", "type": "subject", "ref_name": "character2"},
+        ]
+        args = provider._arguments(
+            prompt="The farmer talks to his friend.",
+            duration=5,
+            aspect_ratio="9:16",
+            references=references,
+        )
+        self.assertEqual(len(args["image_references"]), 2)
+        self.assertIn("@character1", args["prompt"])
+        self.assertIn("@character2", args["prompt"])
