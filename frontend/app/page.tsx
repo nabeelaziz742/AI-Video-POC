@@ -4,6 +4,14 @@ import { FormEvent, useEffect, useState } from "react";
 
 type InputType = "story" | "script";
 
+type CharacterDraft = {
+  name: string;
+  role: string;
+  appearance: string;
+  clothing: string;
+  personality: string;
+};
+
 interface Character {
   id: number;
   name: string;
@@ -50,15 +58,36 @@ function videoAspectClass(aspectRatio: string) {
   return "aspect-[9/16]";
 }
 
+const emptyCharacter = (): CharacterDraft => ({
+  name: "",
+  role: "",
+  appearance: "",
+  clothing: "",
+  personality: "",
+});
+
 export default function Home() {
   const [inputType, setInputType] = useState<InputType>("story");
   const [title, setTitle] = useState("");
   const [prompt, setPrompt] = useState("");
   const [duration, setDuration] = useState(10);
   const [aspectRatio, setAspectRatio] = useState("9:16");
+  const [characters, setCharacters] = useState<CharacterDraft[]>([emptyCharacter()]);
   const [project, setProject] = useState<VideoProject | null>(null);
   const [isGenerating, setIsGenerating] = useState(false);
   const [error, setError] = useState("");
+
+  function updateCharacter(index: number, field: keyof CharacterDraft, value: string) {
+    setCharacters((current) =>
+      current.map((character, characterIndex) =>
+        characterIndex === index ? { ...character, [field]: value } : character
+      )
+    );
+  }
+
+  function removeCharacter(index: number) {
+    setCharacters((current) => current.filter((_, characterIndex) => characterIndex !== index));
+  }
 
   async function generateVideo(event: FormEvent) {
     event.preventDefault();
@@ -67,6 +96,7 @@ export default function Home() {
       return;
     }
 
+    const validCharacters = characters.filter((character) => character.name.trim());
     setError("");
     setProject(null);
     setIsGenerating(true);
@@ -81,6 +111,7 @@ export default function Home() {
           prompt: prompt.trim(),
           aspect_ratio: aspectRatio,
           duration,
+          characters: validCharacters,
         }),
       });
 
@@ -104,9 +135,7 @@ export default function Home() {
 
     const interval = setInterval(async () => {
       try {
-        const response = await fetch(
-          `${API_BASE_URL}/projects/${project.id}/status/`
-        );
+        const response = await fetch(`${API_BASE_URL}/projects/${project.id}/status/`);
         const data = await response.json();
         if (!response.ok) throw new Error(data.detail || "Unable to check status.");
         setProject(data);
@@ -139,7 +168,7 @@ export default function Home() {
             <p className="mb-3 text-sm font-medium text-violet-400">CREATE VIDEO</p>
             <h2 className="text-4xl font-semibold tracking-tight">Turn your story into a video.</h2>
             <p className="mt-3 max-w-2xl text-sm leading-6 text-white/45">
-              Create a story or complete script, choose duration and format, and generate a scene-based video.
+              Create a story or complete script, define recurring characters, choose duration and format, and generate a scene-based video.
             </p>
           </div>
 
@@ -159,7 +188,35 @@ export default function Home() {
                 <label className="text-sm text-white/60">{inputType === "story" ? "Describe your story" : "Paste your script"}</label>
                 <span className="text-xs text-white/25">{prompt.length} characters</span>
               </div>
-              <textarea value={prompt} onChange={(e) => setPrompt(e.target.value)} rows={10} placeholder={inputType === "story" ? "A kind farmer lives in a beautiful rural village..." : "Farmer: Good morning...\nNarrator: Early one morning..."} className="w-full resize-none rounded-2xl border border-white/10 bg-white/[0.03] px-5 py-4 text-sm leading-6 outline-none placeholder:text-white/20 focus:border-violet-500/60" />
+              <textarea value={prompt} onChange={(e) => setPrompt(e.target.value)} rows={9} placeholder={inputType === "story" ? "A kind farmer lives in a beautiful rural village..." : "Farmer: Good morning...\nNarrator: Early one morning..."} className="w-full resize-none rounded-2xl border border-white/10 bg-white/[0.03] px-5 py-4 text-sm leading-6 outline-none placeholder:text-white/20 focus:border-violet-500/60" />
+            </div>
+
+            <div className="mb-5 rounded-2xl border border-white/10 bg-white/[0.025] p-5">
+              <div className="mb-4 flex items-center justify-between">
+                <div>
+                  <h3 className="text-sm font-semibold">Recurring Characters</h3>
+                  <p className="mt-1 text-xs text-white/30">Define characters once so the AI can keep them consistent across scenes.</p>
+                </div>
+                <button type="button" onClick={() => setCharacters((current) => [...current, emptyCharacter()])} className="rounded-lg border border-white/10 px-3 py-2 text-xs text-white/60 hover:bg-white/5 hover:text-white">+ Add Character</button>
+              </div>
+
+              <div className="space-y-4">
+                {characters.map((character, index) => (
+                  <div key={index} className="rounded-xl border border-white/10 bg-black/20 p-4">
+                    <div className="mb-3 flex items-center justify-between">
+                      <span className="text-xs font-medium text-white/40">Character {index + 1}</span>
+                      {characters.length > 1 && <button type="button" onClick={() => removeCharacter(index)} className="text-xs text-red-300/60 hover:text-red-300">Remove</button>}
+                    </div>
+                    <div className="grid gap-3 sm:grid-cols-2">
+                      <input value={character.name} onChange={(e) => updateCharacter(index, "name", e.target.value)} placeholder="Name — Farmer" className="rounded-lg border border-white/10 bg-white/[0.03] px-3 py-2.5 text-xs outline-none placeholder:text-white/20 focus:border-violet-500/50" />
+                      <input value={character.role} onChange={(e) => updateCharacter(index, "role", e.target.value)} placeholder="Role — Main character" className="rounded-lg border border-white/10 bg-white/[0.03] px-3 py-2.5 text-xs outline-none placeholder:text-white/20 focus:border-violet-500/50" />
+                      <input value={character.appearance} onChange={(e) => updateCharacter(index, "appearance", e.target.value)} placeholder="Appearance — face, hair, body" className="rounded-lg border border-white/10 bg-white/[0.03] px-3 py-2.5 text-xs outline-none placeholder:text-white/20 focus:border-violet-500/50" />
+                      <input value={character.clothing} onChange={(e) => updateCharacter(index, "clothing", e.target.value)} placeholder="Clothing — green vest, shalwar" className="rounded-lg border border-white/10 bg-white/[0.03] px-3 py-2.5 text-xs outline-none placeholder:text-white/20 focus:border-violet-500/50" />
+                      <input value={character.personality} onChange={(e) => updateCharacter(index, "personality", e.target.value)} placeholder="Personality — kind, funny" className="rounded-lg border border-white/10 bg-white/[0.03] px-3 py-2.5 text-xs outline-none placeholder:text-white/20 focus:border-violet-500/50 sm:col-span-2" />
+                    </div>
+                  </div>
+                ))}
+              </div>
             </div>
 
             <div className="mb-6 grid gap-4 sm:grid-cols-2">
@@ -201,7 +258,7 @@ export default function Home() {
 
             {!project && !isGenerating && (
               <div className="flex aspect-[9/12] items-center justify-center rounded-xl border border-dashed border-white/10 bg-black/20">
-                <div className="px-8 text-center"><div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-violet-500/10 text-2xl">✦</div><p className="text-sm text-white/50">Your generated video will appear here.</p><p className="mt-2 text-xs leading-5 text-white/25">Enter your story or script and start generation.</p></div>
+                <div className="px-8 text-center"><div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-violet-500/10 text-2xl">✦</div><p className="text-sm text-white/50">Your generated video will appear here.</p><p className="mt-2 text-xs leading-5 text-white/25">Enter your story, define characters, and start generation.</p></div>
               </div>
             )}
 
