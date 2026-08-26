@@ -5,19 +5,29 @@ from .scene_planner import SUPPORTED_ASPECT_RATIOS, SUPPORTED_DURATIONS
 
 
 class CharacterSerializer(serializers.ModelSerializer):
+    consistency_prompt = serializers.ReadOnlyField()
+
     class Meta:
         model = Character
         fields = [
             "id",
             "name",
             "role",
+            "age_description",
+            "appearance",
+            "clothing",
+            "personality",
             "description",
             "visual_prompt",
             "reference_image_url",
+            "consistency_prompt",
         ]
+        read_only_fields = ["id", "consistency_prompt"]
 
 
 class VideoSceneSerializer(serializers.ModelSerializer):
+    characters = CharacterSerializer(many=True, read_only=True)
+
     class Meta:
         model = VideoScene
         fields = [
@@ -25,6 +35,7 @@ class VideoSceneSerializer(serializers.ModelSerializer):
             "scene_number",
             "duration",
             "prompt",
+            "characters",
             "status",
             "provider",
             "provider_project_id",
