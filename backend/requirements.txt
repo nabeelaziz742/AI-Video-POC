@@ -3,4 +3,4 @@ djangorestframework>=3.16,<4
 django-cors-headers>=4.7,<5
 python-dotenv>=1.1,<2
 requests>=2.32,<3
-fal-client>=0.5,<1
+fal-client>=0.7,<1
