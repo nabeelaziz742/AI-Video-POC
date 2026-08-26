@@ -4,6 +4,7 @@ from .ai_views import (
     CharacterReferenceView,
     ProjectAssembleView,
     SceneGenerateView,
+    SceneRegenerateView,
     SceneStatusView,
 )
 from .views import VideoProjectCreateView, VideoProjectStatusView
@@ -25,6 +26,11 @@ urlpatterns = [
         "projects/<int:project_id>/scenes/<int:scene_id>/generate/",
         SceneGenerateView.as_view(),
         name="scene-generate",
+    ),
+    path(
+        "projects/<int:project_id>/scenes/<int:scene_id>/regenerate/",
+        SceneRegenerateView.as_view(),
+        name="scene-regenerate",
     ),
     path(
         "projects/<int:project_id>/scenes/<int:scene_id>/status/",
