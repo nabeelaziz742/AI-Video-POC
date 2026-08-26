@@ -32,10 +32,14 @@ class VideoProjectCreateView(APIView):
             duration, aspect_ratio = validate_generation_options(
                 request.data.get("duration", 10), aspect_ratio
             )
+            scene_plan = build_scene_plan(prompt, duration)
+            normalized_characters = []
+            for item in characters_input:
+                if not isinstance(item, dict) or not str(item.get("name", "")).strip():
+                    raise ValueError("Each character must have a name.")
+                normalized_characters.append(item)
         except (TypeError, ValueError) as exc:
             return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
-
-        scene_plan = build_scene_plan(prompt, duration)
 
         with transaction.atomic():
             project = VideoProject.objects.create(
@@ -49,9 +53,7 @@ class VideoProjectCreateView(APIView):
             )
 
             characters = []
-            for item in characters_input:
-                if not isinstance(item, dict) or not str(item.get("name", "")).strip():
-                    raise ValueError("Each character must have a name.")
+            for item in normalized_characters:
                 characters.append(
                     Character.objects.create(
                         project=project,
@@ -67,21 +69,20 @@ class VideoProjectCreateView(APIView):
                     )
                 )
 
-            scenes = []
             character_block = (
                 "\nCharacter continuity: "
                 + "; ".join(character.consistency_prompt for character in characters)
                 + ". Keep recurring characters visually identical across scenes."
             )
-            for scene in scene_plan:
-                scenes.append(
-                    VideoScene(
-                        project=project,
-                        scene_number=scene["scene_number"],
-                        duration=scene["duration"],
-                        prompt=scene["prompt"] + character_block,
-                    )
+            scenes = [
+                VideoScene(
+                    project=project,
+                    scene_number=scene["scene_number"],
+                    duration=scene["duration"],
+                    prompt=scene["prompt"] + character_block,
                 )
+                for scene in scene_plan
+            ]
             VideoScene.objects.bulk_create(scenes)
             for scene in project.scenes.all():
                 scene.characters.set(characters)
