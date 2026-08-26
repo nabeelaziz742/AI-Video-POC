@@ -1,7 +1,10 @@
 from django.test import TestCase
+from rest_framework.test import APIRequestFactory
 
 from .models import Character, VideoProject, VideoScene
+from .providers import FalPixVerseC1Provider, VideoProviderError
 from .scene_planner import build_scene_plan, get_dimensions, validate_generation_options
+from .views import VideoProjectCreateView
 
 
 class GenerationOptionsTests(TestCase):
@@ -42,7 +45,6 @@ class CharacterSceneModelTests(TestCase):
             prompt="The farmer walks through the village.",
         )
         scene.characters.add(character)
-
         self.assertEqual(project.characters.count(), 1)
         self.assertEqual(project.scenes.count(), 1)
         self.assertEqual(scene.characters.first(), character)
@@ -52,3 +54,53 @@ class CharacterSceneModelTests(TestCase):
         VideoScene.objects.create(project=project, scene_number=1, duration=10, prompt="Scene one")
         with self.assertRaises(Exception):
             VideoScene.objects.create(project=project, scene_number=1, duration=10, prompt="Duplicate")
+
+
+class ProjectPlanningAPITests(TestCase):
+    def test_project_creation_only_plans_scenes(self):
+        factory = APIRequestFactory()
+        request = factory.post(
+            "/projects/",
+            {
+                "title": "Farmer Story",
+                "prompt": "A farmer walks with his buffalo.",
+                "duration": 10,
+                "aspect_ratio": "9:16",
+                "characters": [{"name": "Farmer", "appearance": "friendly 3D cartoon farmer"}],
+            },
+            format="json",
+        )
+        response = VideoProjectCreateView.as_view()(request)
+        self.assertEqual(response.status_code, 201)
+        project = VideoProject.objects.get(id=response.data["id"])
+        self.assertEqual(project.status, VideoProject.Status.QUEUED)
+        self.assertIsNone(project.provider_project_id)
+        self.assertEqual(project.scenes.count(), 2)
+
+    def test_project_requires_character(self):
+        factory = APIRequestFactory()
+        request = factory.post(
+            "/projects/",
+            {"title": "Story", "prompt": "A farmer story", "duration": 10, "characters": []},
+            format="json",
+        )
+        response = VideoProjectCreateView.as_view()(request)
+        self.assertEqual(response.status_code, 400)
+
+
+class PixVerseProviderValidationTests(TestCase):
+    def test_reference_is_required(self):
+        provider = object.__new__(FalPixVerseC1Provider)
+        with self.assertRaises(VideoProviderError):
+            provider._arguments(prompt="walk", duration=5, aspect_ratio="9:16", reference_image_url=None)
+
+    def test_prompt_references_character(self):
+        provider = object.__new__(FalPixVerseC1Provider)
+        args = provider._arguments(
+            prompt="The farmer walks through the village.",
+            duration=5,
+            aspect_ratio="9:16",
+            reference_image_url="https://example.com/farmer.png",
+        )
+        self.assertIn("@character", args["prompt"])
+        self.assertEqual(args["image_references"][0]["type"], "subject")
