@@ -12,11 +12,11 @@ class VideoProvider(ABC):
     name = "base"
 
     @abstractmethod
-    def generate_scene(self, *, prompt, duration, aspect_ratio, reference_image_url=None):
+    def generate_scene(self, *, prompt, duration, aspect_ratio, reference_image_url=None, references=None):
         raise NotImplementedError
 
     @abstractmethod
-    def submit_scene(self, *, prompt, duration, aspect_ratio, reference_image_url=None):
+    def submit_scene(self, *, prompt, duration, aspect_ratio, reference_image_url=None, references=None):
         raise NotImplementedError
 
     @abstractmethod
@@ -27,15 +27,11 @@ class VideoProvider(ABC):
 class JSON2VideoProvider(VideoProvider):
     name = "json2video"
 
-    def generate_scene(self, *, prompt, duration, aspect_ratio, reference_image_url=None):
-        raise VideoProviderError(
-            "JSON2Video is an assembly provider; an AI scene clip is required first."
-        )
+    def generate_scene(self, **kwargs):
+        raise VideoProviderError("JSON2Video is an assembly provider; an AI scene clip is required first.")
 
     def submit_scene(self, **kwargs):
-        raise VideoProviderError(
-            "JSON2Video is an assembly provider; use it after AI scene clips are generated."
-        )
+        raise VideoProviderError("JSON2Video is an assembly provider; use it after AI scene clips are generated.")
 
     def get_scene_result(self, request_id):
         raise VideoProviderError("JSON2Video does not manage AI scene jobs.")
@@ -52,37 +48,44 @@ class FalPixVerseC1Provider(VideoProvider):
             raise VideoProviderError("FAL_KEY is not configured.")
 
     @staticmethod
-    def _validate(duration, aspect_ratio, reference_image_url):
-        if not reference_image_url:
-            raise VideoProviderError(
-                "PixVerse C1 requires a reference_image_url for character-consistent scenes."
-            )
+    def _validate(duration, aspect_ratio, references):
+        if not references:
+            raise VideoProviderError("PixVerse C1 requires at least one character reference image.")
         if duration < 1 or duration > 15:
             raise VideoProviderError("PixVerse C1 scene duration must be between 1 and 15 seconds.")
         if aspect_ratio not in {"9:16", "16:9", "1:1"}:
             raise VideoProviderError("Unsupported aspect ratio.")
 
-    def _arguments(self, *, prompt, duration, aspect_ratio, reference_image_url):
-        self._validate(duration, aspect_ratio, reference_image_url)
+    def _arguments(self, *, prompt, duration, aspect_ratio, reference_image_url=None, references=None):
+        refs = list(references or [])
+        if not refs and reference_image_url:
+            refs = [{"image_url": reference_image_url, "ref_name": "character"}]
+        self._validate(duration, aspect_ratio, refs)
+
         normalized_prompt = prompt[:1900]
-        if "@character" not in normalized_prompt:
-            normalized_prompt = f"@character {normalized_prompt}"
+        if refs:
+            ref_names = [ref["ref_name"] for ref in refs]
+            if not any(f"@{name}" in normalized_prompt for name in ref_names):
+                normalized_prompt = " ".join(f"@{name}" for name in ref_names) + " " + normalized_prompt
+
+        image_references = [
+            {
+                "image_url": ref["image_url"],
+                "type": ref.get("type", "subject"),
+                "ref_name": ref["ref_name"],
+            }
+            for ref in refs
+        ]
         return {
-            "prompt": normalized_prompt,
+            "prompt": normalized_prompt[:2048],
             "aspect_ratio": aspect_ratio,
             "resolution": os.getenv("FAL_VIDEO_RESOLUTION", "720p"),
             "duration": duration,
             "generate_audio_switch": False,
-            "image_references": [
-                {
-                    "image_url": reference_image_url,
-                    "type": "subject",
-                    "ref_name": "character",
-                }
-            ],
+            "image_references": image_references,
         }
 
-    def generate_scene(self, *, prompt, duration, aspect_ratio, reference_image_url=None):
+    def generate_scene(self, *, prompt, duration, aspect_ratio, reference_image_url=None, references=None):
         result = fal_client.subscribe(
             self.endpoint,
             arguments=self._arguments(
@@ -90,6 +93,7 @@ class FalPixVerseC1Provider(VideoProvider):
                 duration=duration,
                 aspect_ratio=aspect_ratio,
                 reference_image_url=reference_image_url,
+                references=references,
             ),
         )
         video = result.get("video") if isinstance(result, dict) else None
@@ -97,7 +101,7 @@ class FalPixVerseC1Provider(VideoProvider):
             raise VideoProviderError(f"PixVerse returned no video: {result}")
         return {"request_id": None, "video_url": video["url"], "raw": result}
 
-    def submit_scene(self, *, prompt, duration, aspect_ratio, reference_image_url=None):
+    def submit_scene(self, *, prompt, duration, aspect_ratio, reference_image_url=None, references=None):
         handle = fal_client.submit(
             self.endpoint,
             arguments=self._arguments(
@@ -105,6 +109,7 @@ class FalPixVerseC1Provider(VideoProvider):
                 duration=duration,
                 aspect_ratio=aspect_ratio,
                 reference_image_url=reference_image_url,
+                references=references,
             ),
         )
         return {"request_id": handle.request_id, "provider": self.name}
@@ -126,10 +131,7 @@ class FalPixVerseC1Provider(VideoProvider):
 
 def get_video_provider(name=None):
     provider_name = name or os.getenv("AI_VIDEO_PROVIDER", "json2video")
-    providers = {
-        "json2video": JSON2VideoProvider,
-        "fal_pixverse_c1": FalPixVerseC1Provider,
-    }
+    providers = {"json2video": JSON2VideoProvider, "fal_pixverse_c1": FalPixVerseC1Provider}
     try:
         return providers[provider_name]()
     except KeyError as exc:
