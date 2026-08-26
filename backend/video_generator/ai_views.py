@@ -13,9 +13,7 @@ from .services import JSON2VideoService
 
 class CharacterReferenceView(APIView):
     def post(self, request, project_id, character_id):
-        character = get_object_or_404(
-            Character, id=character_id, project_id=project_id
-        )
+        character = get_object_or_404(Character, id=character_id, project_id=project_id)
         try:
             url = generate_character_reference(character)
         except CharacterGenerationError as exc:
@@ -36,6 +34,9 @@ class SceneGenerateView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
+        if scene.status == VideoScene.Status.PROCESSING and scene.provider_project_id:
+            return Response(VideoSceneSerializer(scene).data, status=status.HTTP_202_ACCEPTED)
+
         try:
             provider = get_video_provider(provider_name)
             job = provider.submit_scene(
@@ -53,8 +54,9 @@ class SceneGenerateView(APIView):
         scene.status = VideoScene.Status.PROCESSING
         scene.provider = provider_name
         scene.provider_project_id = job["request_id"]
+        scene.video_url = None
         scene.error_message = None
-        scene.save(update_fields=["status", "provider", "provider_project_id", "error_message"])
+        scene.save(update_fields=["status", "provider", "provider_project_id", "video_url", "error_message"])
         return Response(VideoSceneSerializer(scene).data, status=status.HTTP_202_ACCEPTED)
 
 
@@ -87,6 +89,19 @@ class SceneStatusView(APIView):
         return Response(VideoSceneSerializer(scene).data)
 
 
+class SceneRegenerateView(SceneGenerateView):
+    """Explicitly start a fresh provider job for a scene after failure or revision."""
+
+    def post(self, request, project_id, scene_id):
+        scene = get_object_or_404(VideoScene, id=scene_id, project_id=project_id)
+        scene.status = VideoScene.Status.PLANNED
+        scene.provider_project_id = None
+        scene.video_url = None
+        scene.error_message = None
+        scene.save(update_fields=["status", "provider_project_id", "video_url", "error_message"])
+        return super().post(request, project_id, scene_id)
+
+
 class ProjectAssembleView(APIView):
     def post(self, request, project_id):
         project = get_object_or_404(VideoProject, id=project_id)
@@ -97,22 +112,12 @@ class ProjectAssembleView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        clips = [
-            {
-                "scene_number": scene.scene_number,
-                "video_url": scene.video_url,
-            }
-            for scene in scenes
-        ]
+        clips = [{"scene_number": scene.scene_number, "video_url": scene.video_url} for scene in scenes]
         width, height = get_dimensions(project.aspect_ratio)
 
         try:
-            service = JSON2VideoService()
-            result = service.create_movie_from_clips(
-                clips=clips,
-                width=width,
-                height=height,
-                project_id=project.id,
+            result = JSON2VideoService().create_movie_from_clips(
+                clips=clips, width=width, height=height, project_id=project.id
             )
         except Exception as exc:
             project.status = VideoProject.Status.FAILED
@@ -124,13 +129,5 @@ class ProjectAssembleView(APIView):
         project.provider_project_id = result["project"]
         project.status = VideoProject.Status.PROCESSING
         project.error_message = None
-        project.save(
-            update_fields=[
-                "provider",
-                "provider_project_id",
-                "status",
-                "error_message",
-                "updated_at",
-            ]
-        )
+        project.save(update_fields=["provider", "provider_project_id", "status", "error_message", "updated_at"])
         return Response(VideoProjectSerializer(project).data, status=status.HTTP_202_ACCEPTED)
