@@ -10,9 +10,7 @@ class JSON2VideoService:
         self.api_key = os.getenv("JSON2VIDEO_API_KEY")
 
         if not self.api_key:
-            raise RuntimeError(
-                "JSON2VIDEO_API_KEY is not configured."
-            )
+            raise RuntimeError("JSON2VIDEO_API_KEY is not configured.")
 
         self.headers = {
             "x-api-key": self.api_key,
@@ -26,10 +24,36 @@ class JSON2VideoService:
             json=movie_payload,
             timeout=60,
         )
-
         response.raise_for_status()
-
         return response.json()
+
+    def create_movie_from_clips(self, *, clips, width, height, project_id):
+        """Assemble externally generated scene clips into one final movie."""
+        scenes = []
+        for index, clip in enumerate(clips, start=1):
+            scenes.append(
+                {
+                    "comment": f"AI generated scene {index}",
+                    "elements": [
+                        {
+                            "type": "video",
+                            "src": clip["video_url"],
+                        }
+                    ],
+                }
+            )
+
+        return self.create_movie(
+            {
+                "width": width,
+                "height": height,
+                "scenes": scenes,
+                "client-data": {
+                    "project_id": project_id,
+                    "pipeline": "ai-scenes",
+                },
+            }
+        )
 
     def get_movie(self, project_id):
         response = requests.get(
@@ -38,7 +62,5 @@ class JSON2VideoService:
             headers=self.headers,
             timeout=60,
         )
-
         response.raise_for_status()
-
         return response.json()
