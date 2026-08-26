@@ -7,10 +7,12 @@ from .ai_views import (
     SceneRegenerateView,
     SceneStatusView,
 )
+from .health import HealthCheckView
 from .views import VideoProjectCreateView, VideoProjectStatusView
 
 
 urlpatterns = [
+    path("health/", HealthCheckView.as_view(), name="health"),
     path("projects/", VideoProjectCreateView.as_view(), name="video-project-create"),
     path(
         "projects/<int:project_id>/status/",
