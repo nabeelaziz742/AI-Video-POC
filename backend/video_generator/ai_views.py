@@ -27,10 +27,20 @@ class SceneGenerateView(APIView):
         scene = get_object_or_404(VideoScene, id=scene_id, project=project)
         provider_name = request.data.get("provider") or "fal_pixverse_c1"
 
-        reference = scene.characters.filter(reference_image_url__isnull=False).first()
-        if not reference:
+        references = [
+            {
+                "image_url": character.reference_image_url,
+                "type": "subject",
+                "ref_name": f"character{index}",
+            }
+            for index, character in enumerate(
+                scene.characters.filter(reference_image_url__isnull=False).order_by("id"),
+                start=1,
+            )
+        ]
+        if not references:
             return Response(
-                {"detail": "Generate a character reference image before generating this scene."},
+                {"detail": "Generate character reference images before generating this scene."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
@@ -43,7 +53,7 @@ class SceneGenerateView(APIView):
                 prompt=scene.prompt,
                 duration=scene.duration,
                 aspect_ratio=project.aspect_ratio,
-                reference_image_url=reference.reference_image_url,
+                references=references,
             )
         except VideoProviderError as exc:
             scene.status = VideoScene.Status.FAILED
