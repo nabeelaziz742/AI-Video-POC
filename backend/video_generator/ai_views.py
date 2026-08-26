@@ -4,7 +4,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from .character_generation import CharacterGenerationError, generate_character_reference
-from .models import Character, VideoProject, VideoScene
+from .models import VideoProject, VideoScene
 from .providers import VideoProviderError, get_video_provider
 from .scene_planner import get_dimensions
 from .serializers import VideoProjectSerializer, VideoSceneSerializer
@@ -13,6 +13,8 @@ from .services import JSON2VideoService
 
 class CharacterReferenceView(APIView):
     def post(self, request, project_id, character_id):
+        from .models import Character
+
         character = get_object_or_404(Character, id=character_id, project_id=project_id)
         try:
             url = generate_character_reference(character)
@@ -95,6 +97,10 @@ class SceneStatusView(APIView):
         elif result["status"] in {"queued", "processing"}:
             scene.status = VideoScene.Status.PROCESSING
             scene.save(update_fields=["status"])
+        elif result["status"] in {"failed", "error", "cancelled"}:
+            scene.status = VideoScene.Status.FAILED
+            scene.error_message = result.get("error") or "AI video generation failed."
+            scene.save(update_fields=["status", "error_message"])
 
         return Response(VideoSceneSerializer(scene).data)
 
