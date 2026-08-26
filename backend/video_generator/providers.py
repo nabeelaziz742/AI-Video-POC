@@ -64,8 +64,11 @@ class FalPixVerseC1Provider(VideoProvider):
 
     def _arguments(self, *, prompt, duration, aspect_ratio, reference_image_url):
         self._validate(duration, aspect_ratio, reference_image_url)
+        normalized_prompt = prompt[:1900]
+        if "@character" not in normalized_prompt:
+            normalized_prompt = f"@character {normalized_prompt}"
         return {
-            "prompt": prompt[:2048],
+            "prompt": normalized_prompt,
             "aspect_ratio": aspect_ratio,
             "resolution": os.getenv("FAL_VIDEO_RESOLUTION", "720p"),
             "duration": duration,
