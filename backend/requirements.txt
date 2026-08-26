@@ -1,5 +1,5 @@
 Django==5.2.17
 djangorestframework>=3.16,<4
- django-cors-headers>=4.7,<5
+django-cors-headers>=4.7,<5
 python-dotenv>=1.1,<2
 requests>=2.32,<3
