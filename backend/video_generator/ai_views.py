@@ -1,0 +1,136 @@
+from django.shortcuts import get_object_or_404
+from rest_framework import status
+from rest_framework.response import Response
+from rest_framework.views import APIView
+
+from .character_generation import CharacterGenerationError, generate_character_reference
+from .models import Character, VideoProject, VideoScene
+from .providers import VideoProviderError, get_video_provider
+from .scene_planner import get_dimensions
+from .serializers import VideoProjectSerializer, VideoSceneSerializer
+from .services import JSON2VideoService
+
+
+class CharacterReferenceView(APIView):
+    def post(self, request, project_id, character_id):
+        character = get_object_or_404(
+            Character, id=character_id, project_id=project_id
+        )
+        try:
+            url = generate_character_reference(character)
+        except CharacterGenerationError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_502_BAD_GATEWAY)
+        return Response({"character": character.id, "reference_image_url": url})
+
+
+class SceneGenerateView(APIView):
+    def post(self, request, project_id, scene_id):
+        project = get_object_or_404(VideoProject, id=project_id)
+        scene = get_object_or_404(VideoScene, id=scene_id, project=project)
+        provider_name = request.data.get("provider") or "fal_pixverse_c1"
+
+        reference = scene.characters.filter(reference_image_url__isnull=False).first()
+        if not reference:
+            return Response(
+                {"detail": "Generate a character reference image before generating this scene."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            provider = get_video_provider(provider_name)
+            job = provider.submit_scene(
+                prompt=scene.prompt,
+                duration=scene.duration,
+                aspect_ratio=project.aspect_ratio,
+                reference_image_url=reference.reference_image_url,
+            )
+        except VideoProviderError as exc:
+            scene.status = VideoScene.Status.FAILED
+            scene.error_message = str(exc)
+            scene.save(update_fields=["status", "error_message"])
+            return Response({"detail": str(exc)}, status=status.HTTP_502_BAD_GATEWAY)
+
+        scene.status = VideoScene.Status.PROCESSING
+        scene.provider = provider_name
+        scene.provider_project_id = job["request_id"]
+        scene.error_message = None
+        scene.save(update_fields=["status", "provider", "provider_project_id", "error_message"])
+        return Response(VideoSceneSerializer(scene).data, status=status.HTTP_202_ACCEPTED)
+
+
+class SceneStatusView(APIView):
+    def get(self, request, project_id, scene_id):
+        project = get_object_or_404(VideoProject, id=project_id)
+        scene = get_object_or_404(VideoScene, id=scene_id, project=project)
+
+        if not scene.provider_project_id or scene.provider != "fal_pixverse_c1":
+            return Response(VideoSceneSerializer(scene).data)
+
+        try:
+            provider = get_video_provider(scene.provider)
+            result = provider.get_scene_result(scene.provider_project_id)
+        except VideoProviderError as exc:
+            scene.status = VideoScene.Status.FAILED
+            scene.error_message = str(exc)
+            scene.save(update_fields=["status", "error_message"])
+            return Response({"detail": str(exc)}, status=status.HTTP_502_BAD_GATEWAY)
+
+        if result["status"] == "completed":
+            scene.status = VideoScene.Status.COMPLETED
+            scene.video_url = result["video_url"]
+            scene.error_message = None
+            scene.save(update_fields=["status", "video_url", "error_message"])
+        elif result["status"] in {"queued", "processing"}:
+            scene.status = VideoScene.Status.PROCESSING
+            scene.save(update_fields=["status"])
+
+        return Response(VideoSceneSerializer(scene).data)
+
+
+class ProjectAssembleView(APIView):
+    def post(self, request, project_id):
+        project = get_object_or_404(VideoProject, id=project_id)
+        scenes = list(project.scenes.order_by("scene_number"))
+        if not scenes or any(scene.status != VideoScene.Status.COMPLETED for scene in scenes):
+            return Response(
+                {"detail": "All scenes must be completed before assembly."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        clips = [
+            {
+                "scene_number": scene.scene_number,
+                "video_url": scene.video_url,
+            }
+            for scene in scenes
+        ]
+        width, height = get_dimensions(project.aspect_ratio)
+
+        try:
+            service = JSON2VideoService()
+            result = service.create_movie_from_clips(
+                clips=clips,
+                width=width,
+                height=height,
+                project_id=project.id,
+            )
+        except Exception as exc:
+            project.status = VideoProject.Status.FAILED
+            project.error_message = str(exc)
+            project.save(update_fields=["status", "error_message", "updated_at"])
+            return Response({"detail": str(exc)}, status=status.HTTP_502_BAD_GATEWAY)
+
+        project.provider = "json2video"
+        project.provider_project_id = result["project"]
+        project.status = VideoProject.Status.PROCESSING
+        project.error_message = None
+        project.save(
+            update_fields=[
+                "provider",
+                "provider_project_id",
+                "status",
+                "error_message",
+                "updated_at",
+            ]
+        )
+        return Response(VideoProjectSerializer(project).data, status=status.HTTP_202_ACCEPTED)
