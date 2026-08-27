@@ -23,16 +23,19 @@ jobs:
         env:
           DJANGO_SECRET_KEY: ci-test-secret
           DJANGO_DEBUG: "True"
+          DJANGO_ALLOWED_HOSTS: 127.0.0.1,localhost
         run: python manage.py check
       - name: Migration check
         env:
           DJANGO_SECRET_KEY: ci-test-secret
           DJANGO_DEBUG: "True"
+          DJANGO_ALLOWED_HOSTS: 127.0.0.1,localhost
         run: python manage.py makemigrations --check --dry-run
       - name: Tests
         env:
           DJANGO_SECRET_KEY: ci-test-secret
           DJANGO_DEBUG: "True"
+          DJANGO_ALLOWED_HOSTS: 127.0.0.1,localhost
         run: python manage.py test
 
   frontend:
