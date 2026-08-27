@@ -13,5 +13,5 @@ class HealthCheckView(APIView):
                 cursor.execute("SELECT 1")
                 cursor.fetchone()
             return Response({"status": "ok", "database": "ok"})
-        except Exception as exc:
-            return Response({"status": "error", "database": "error", "detail": str(exc)}, status=503)
+        except Exception:
+            return Response({"status": "error", "database": "error"}, status=503)
