@@ -1,9 +1,15 @@
+from unittest.mock import patch
+
 from django.test import TestCase
 from rest_framework.test import APIRequestFactory
 
 from .ai_views import SceneGenerateView, SceneRegenerateView
 from .models import Character, VideoProject, VideoScene
-from .providers import VideoProviderError
+
+
+class FakeProvider:
+    def submit_scene(self, **kwargs):
+        return {"request_id": "fake-job", "provider": "fake"}
 
 
 class SceneGenerationSafetyTests(TestCase):
@@ -40,7 +46,18 @@ class SceneGenerationSafetyTests(TestCase):
         self.assertEqual(response.status_code, 400)
         self.assertIn("reference", response.data["detail"].lower())
 
-    def test_regeneration_resets_previous_failure_before_submission(self):
+    @patch("video_generator.ai_views.get_video_provider", return_value=FakeProvider())
+    def test_generation_uses_provider_without_calling_real_api(self, mock_provider):
+        request = self.factory.post("/generate/", {}, format="json")
+        response = SceneGenerateView.as_view()(request, project_id=self.project.id, scene_id=self.scene.id)
+        self.assertEqual(response.status_code, 202)
+        self.scene.refresh_from_db()
+        self.assertEqual(self.scene.status, VideoScene.Status.PROCESSING)
+        self.assertEqual(self.scene.provider_project_id, "fake-job")
+        mock_provider.assert_called_once_with("fal_pixverse_c1")
+
+    @patch("video_generator.ai_views.get_video_provider", return_value=FakeProvider())
+    def test_regeneration_replaces_previous_provider_job(self, mock_provider):
         self.scene.status = VideoScene.Status.FAILED
         self.scene.provider_project_id = "old-job"
         self.scene.video_url = "https://example.com/old.mp4"
@@ -48,11 +65,9 @@ class SceneGenerationSafetyTests(TestCase):
         self.scene.save()
 
         request = self.factory.post("/regenerate/", {}, format="json")
-        try:
-            response = SceneRegenerateView.as_view()(request, project_id=self.project.id, scene_id=self.scene.id)
-        except VideoProviderError:
-            response = None
+        response = SceneRegenerateView.as_view()(request, project_id=self.project.id, scene_id=self.scene.id)
+        self.assertEqual(response.status_code, 202)
         self.scene.refresh_from_db()
-        self.assertNotEqual(self.scene.provider_project_id, "old-job")
+        self.assertEqual(self.scene.provider_project_id, "fake-job")
         self.assertIsNone(self.scene.video_url)
         self.assertIsNone(self.scene.error_message)
