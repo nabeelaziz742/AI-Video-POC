@@ -29,6 +29,10 @@ class JSON2VideoService:
         if not clips:
             raise RuntimeError("At least one generated scene clip is required.")
 
+        ordered_clips = sorted(clips, key=lambda clip: int(clip["scene_number"]))
+        if any(not clip.get("video_url") for clip in ordered_clips):
+            raise RuntimeError("Every scene must have a generated video URL before assembly.")
+
         payload = {
             "width": width,
             "height": height,
@@ -42,7 +46,7 @@ class JSON2VideoService:
                         }
                     ],
                 }
-                for clip in clips
+                for clip in ordered_clips
             ],
             "client-data": {"project_id": project_id, "assembly": "ai-scene-clips"},
         }
