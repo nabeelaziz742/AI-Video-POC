@@ -27,21 +27,24 @@ class ProjectAssemblyTests(TestCase):
     def test_assembly_rejects_incomplete_scenes(self):
         self.add_scene(1, VideoScene.Status.COMPLETED, "https://example.com/1.mp4")
         self.add_scene(2, VideoScene.Status.PROCESSING)
-        request = self.factory.post("/assemble/", {}, format="json")
-        response = ProjectAssembleView.as_view()(request, project_id=self.project.id)
+        response = ProjectAssembleView.as_view()(self.factory.post("/assemble/", {}, format="json"), project_id=self.project.id)
         self.assertEqual(response.status_code, 400)
 
+    def test_assembly_rejects_completed_scene_without_video_url(self):
+        self.add_scene(1, VideoScene.Status.COMPLETED)
+        response = ProjectAssembleView.as_view()(self.factory.post("/assemble/", {}, format="json"), project_id=self.project.id)
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("video URLs", response.data["detail"])
+
     @patch("video_generator.ai_views.JSON2VideoService.create_movie_from_clips")
-    def test_assembly_submits_only_completed_scene_clips(self, create_movie):
-        self.add_scene(1, VideoScene.Status.COMPLETED, "https://example.com/1.mp4")
+    def test_assembly_submits_completed_scene_clips_in_scene_order(self, create_movie):
         self.add_scene(2, VideoScene.Status.COMPLETED, "https://example.com/2.mp4")
+        self.add_scene(1, VideoScene.Status.COMPLETED, "https://example.com/1.mp4")
         create_movie.return_value = {"project": "assembly-job"}
 
-        request = self.factory.post("/assemble/", {}, format="json")
-        response = ProjectAssembleView.as_view()(request, project_id=self.project.id)
+        response = ProjectAssembleView.as_view()(self.factory.post("/assemble/", {}, format="json"), project_id=self.project.id)
 
         self.assertEqual(response.status_code, 202)
-        create_movie.assert_called_once()
         kwargs = create_movie.call_args.kwargs
         self.assertEqual(
             kwargs["clips"],
@@ -53,3 +56,15 @@ class ProjectAssemblyTests(TestCase):
         self.project.refresh_from_db()
         self.assertEqual(self.project.provider_project_id, "assembly-job")
         self.assertEqual(self.project.status, VideoProject.Status.PROCESSING)
+
+    @patch("video_generator.ai_views.JSON2VideoService.create_movie_from_clips")
+    def test_assembly_provider_failure_marks_project_failed(self, create_movie):
+        create_movie.side_effect = RuntimeError("JSON2Video unavailable")
+        self.add_scene(1, VideoScene.Status.COMPLETED, "https://example.com/1.mp4")
+
+        response = ProjectAssembleView.as_view()(self.factory.post("/assemble/", {}, format="json"), project_id=self.project.id)
+
+        self.assertEqual(response.status_code, 502)
+        self.project.refresh_from_db()
+        self.assertEqual(self.project.status, VideoProject.Status.FAILED)
+        self.assertEqual(self.project.error_message, "JSON2Video unavailable")
