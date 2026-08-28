@@ -14,7 +14,18 @@ class PlansView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        return Response({"plans": [{"code": p.code, "name": p.name, "monthly_price_usd": str(p.monthly_price_usd), "monthly_credits": p.monthly_credits, "max_duration": p.max_duration, "available": p.code == "free" or stripe_configured()] for p in PLANS.values()]})
+        plans = []
+        configured = stripe_configured()
+        for plan in PLANS.values():
+            plans.append({
+                "code": plan.code,
+                "name": plan.name,
+                "monthly_price_usd": str(plan.monthly_price_usd),
+                "monthly_credits": plan.monthly_credits,
+                "max_duration": plan.max_duration,
+                "available": plan.code == "free" or configured,
+            })
+        return Response({"plans": plans})
 
 
 class SubscriptionView(APIView):
@@ -24,7 +35,14 @@ class SubscriptionView(APIView):
         subscription = ensure_subscription(request.user)
         if subscription.plan_code == Subscription.Plan.FREE and not CreditAccount.objects.filter(user=request.user).exists():
             apply_plan_allowance(request.user, "free", grant=True, idempotency_key=f"free-grant:{request.user.pk}")
-        return Response({"plan_code": subscription.plan_code, "status": subscription.status, "provider": subscription.provider, "current_period_start": subscription.current_period_start, "current_period_end": subscription.current_period_end, "cancel_at_period_end": subscription.cancel_at_period_end})
+        return Response({
+            "plan_code": subscription.plan_code,
+            "status": subscription.status,
+            "provider": subscription.provider,
+            "current_period_start": subscription.current_period_start,
+            "current_period_end": subscription.current_period_end,
+            "cancel_at_period_end": subscription.cancel_at_period_end,
+        })
 
 
 class SubscriptionChangeView(APIView):
