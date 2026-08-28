@@ -3,7 +3,7 @@ from decimal import Decimal
 
 from django.db import transaction
 
-from .models import CreditAccount
+from .models import CreditAccount, CreditTransaction, Subscription
 
 
 @dataclass(frozen=True)
@@ -23,13 +23,25 @@ PLANS = {
 
 
 def get_plan(code: str) -> Plan:
-    return PLANS.get(code, PLANS["free"])
+    if code not in PLANS:
+        raise ValueError("Unknown plan.")
+    return PLANS[code]
 
 
-def apply_plan_allowance(user, plan_code: str):
+def ensure_subscription(user) -> Subscription:
+    subscription, _ = Subscription.objects.get_or_create(user=user)
+    return subscription
+
+
+def apply_plan_allowance(user, plan_code: str, *, grant: bool = False, idempotency_key: str | None = None):
     plan = get_plan(plan_code)
     with transaction.atomic():
         account, _ = CreditAccount.objects.select_for_update().get_or_create(user=user)
         account.monthly_allowance = plan.monthly_credits
-        account.save(update_fields=["monthly_allowance", "updated_at"])
+        if grant:
+            key = idempotency_key or f"allowance:{user.pk}:{plan_code}"
+            if not CreditTransaction.objects.filter(idempotency_key=key).exists():
+                account.balance += plan.monthly_credits
+                CreditTransaction.objects.create(account=account, kind=CreditTransaction.Kind.GRANT, amount=plan.monthly_credits, idempotency_key=key, note=f"{plan.name} monthly allowance")
+        account.save(update_fields=["monthly_allowance", "balance", "updated_at"])
     return plan
