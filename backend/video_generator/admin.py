@@ -1,5 +1,5 @@
 from django.contrib import admin
-from .models import Character, CreditAccount, CreditTransaction, Subscription, UsageEvent, VideoProject, VideoScene
+from .models import BillingEvent, Character, CreditAccount, CreditTransaction, Subscription, UsageEvent, VideoProject, VideoScene
 
 @admin.register(VideoProject)
 class VideoProjectAdmin(admin.ModelAdmin):
@@ -41,3 +41,9 @@ class SubscriptionAdmin(admin.ModelAdmin):
     list_filter=("plan_code","status","provider","cancel_at_period_end")
     search_fields=("user__username","user__email","provider_customer_id","provider_subscription_id")
     readonly_fields=("created_at","updated_at")
+@admin.register(BillingEvent)
+class BillingEventAdmin(admin.ModelAdmin):
+    list_display=("provider","event_type","event_id","processed_at")
+    list_filter=("provider","event_type")
+    search_fields=("event_id","event_type","payload_hash")
+    readonly_fields=("provider","event_id","event_type","payload_hash","processed_at")
