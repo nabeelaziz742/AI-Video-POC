@@ -27,6 +27,14 @@ class BillingLifecycleTests(TestCase):
         with self.assertRaises(ValueError):
             verify_stripe_signature(payload, "t=not-a-number,v1=bad", secret)
 
+    def test_expired_signature_is_rejected(self):
+        payload = b'{"id":"evt_old"}'
+        secret = "whsec_test"
+        timestamp = str(int(time.time()) - 301)
+        digest = hmac.new(secret.encode(), f"{timestamp}.".encode() + payload, hashlib.sha256).hexdigest()
+        with self.assertRaises(ValueError):
+            verify_stripe_signature(payload, f"t={timestamp},v1={digest}", secret)
+
     def test_checkout_activates_subscription_and_grants_initial_allowance_once(self):
         event = {"id": "evt_checkout_1", "type": "checkout.session.completed", "data": {"object": {"metadata": {"user_id": str(self.user.pk), "plan_code": "creator"}, "customer": "cus_1", "subscription": "sub_1"}}}
         self.assertTrue(handle_stripe_event(event))
@@ -58,6 +66,17 @@ class BillingLifecycleTests(TestCase):
         handle_stripe_event(event)
         self.subscription.refresh_from_db()
         self.assertEqual(self.subscription.status, Subscription.Status.PAST_DUE)
+
+    def test_subscription_deleted_cancels_locally(self):
+        self.subscription.plan_code = Subscription.Plan.PRO
+        self.subscription.provider_subscription_id = "sub_deleted"
+        self.subscription.provider = "stripe"
+        self.subscription.status = Subscription.Status.ACTIVE
+        self.subscription.save()
+        event = {"id": "evt_deleted_1", "type": "customer.subscription.deleted", "data": {"object": {"id": "sub_deleted", "status": "canceled"}}}
+        self.assertTrue(handle_stripe_event(event))
+        self.subscription.refresh_from_db()
+        self.assertEqual(self.subscription.status, Subscription.Status.CANCELLED)
 
 
 class BillingApiTests(TestCase):
