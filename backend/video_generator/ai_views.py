@@ -15,7 +15,6 @@ from .scene_planner import get_dimensions
 from .serializers import VideoProjectSerializer, VideoSceneSerializer
 from .services import JSON2VideoService
 
-
 CHARACTER_REFERENCE_COST = 5
 ASSEMBLY_COST = 5
 
@@ -35,17 +34,20 @@ class CharacterReferenceView(OwnedProjectMixin, APIView):
         character = get_object_or_404(Character, id=character_id, project=project)
         if character.reference_image_url and not request.data.get("force"):
             return Response({"character": character.id, "reference_image_url": character.reference_image_url, "reused": True})
-        key = f"character-reference:{character.id}:{character.created_at.timestamp()}:{'force' if request.data.get('force') else 'initial'}"
+        attempt = character.reference_generation_attempt + 1
+        charge_key = f"character-reference:{character.id}:{attempt}"
         try:
-            reserve_credits(request.user, CHARACTER_REFERENCE_COST, idempotency_key=key, project=project, note="Character reference generation")
+            reserve_credits(request.user, CHARACTER_REFERENCE_COST, idempotency_key=charge_key, project=project, note="Character reference generation")
         except ValidationError as exc:
             return Response(exc.detail, status=status.HTTP_402_PAYMENT_REQUIRED)
         try:
             url = generate_character_reference(character)
         except CharacterGenerationError as exc:
-            refund_transaction(project, idempotency_key=f"refund:{key}")
+            refund_transaction(reservation_key=charge_key, idempotency_key=f"refund:{charge_key}")
             return Response({"detail": str(exc)}, status=status.HTTP_502_BAD_GATEWAY)
-        record_usage(request.user, kind=UsageEvent.Kind.CHARACTER_REFERENCE, credits=CHARACTER_REFERENCE_COST, idempotency_key=f"usage:{key}", project=project, character=character)
+        character.reference_generation_attempt = attempt
+        character.save(update_fields=["reference_generation_attempt"])
+        record_usage(request.user, kind=UsageEvent.Kind.CHARACTER_REFERENCE, credits=CHARACTER_REFERENCE_COST, idempotency_key=f"usage:{charge_key}", project=project, character=character)
         return Response({"character": character.id, "reference_image_url": url, "reused": False})
 
 
@@ -62,7 +64,8 @@ class SceneGenerateView(OwnedProjectMixin, APIView):
         if not references:
             return Response({"detail": "Generate character reference images before generating this scene."}, status=status.HTTP_400_BAD_REQUEST)
         cost = generation_cost(scene.duration)
-        charge_key = f"scene-generation:{scene.id}:{scene.generation_attempt + 1}"
+        attempt = scene.generation_attempt + 1
+        charge_key = f"scene-generation:{scene.id}:{attempt}"
         try:
             reserve_credits(request.user, cost, idempotency_key=charge_key, project=project, note="Scene generation")
         except ValidationError as exc:
@@ -74,14 +77,14 @@ class SceneGenerateView(OwnedProjectMixin, APIView):
             if not request_id:
                 raise VideoProviderError("Provider did not return a generation request ID.")
         except VideoProviderError as exc:
-            refund_transaction(project, idempotency_key=f"refund:{charge_key}")
+            refund_transaction(reservation_key=charge_key, idempotency_key=f"refund:{charge_key}")
             scene.status = VideoScene.Status.FAILED
             scene.error_message = str(exc)
             scene.failed_at = timezone.now()
             scene.save(update_fields=["status", "error_message", "failed_at"])
             return Response({"detail": str(exc)}, status=status.HTTP_502_BAD_GATEWAY)
         except Exception:
-            refund_transaction(project, idempotency_key=f"refund:{charge_key}")
+            refund_transaction(reservation_key=charge_key, idempotency_key=f"refund:{charge_key}")
             scene.status = VideoScene.Status.FAILED
             scene.error_message = "Unable to submit the AI scene generation job."
             scene.failed_at = timezone.now()
@@ -92,7 +95,7 @@ class SceneGenerateView(OwnedProjectMixin, APIView):
         scene.provider_project_id = request_id
         scene.video_url = None
         scene.error_message = None
-        scene.generation_attempt += 1
+        scene.generation_attempt = attempt
         scene.processing_started_at = timezone.now()
         scene.completed_at = None
         scene.failed_at = None
@@ -174,20 +177,21 @@ class ProjectAssembleView(OwnedProjectMixin, APIView):
         scenes = list(project.scenes.order_by("scene_number"))
         if not scenes or any(scene.status != VideoScene.Status.COMPLETED or not scene.video_url for scene in scenes):
             return Response({"detail": "All scenes must be completed and have a video URL before assembly."}, status=status.HTTP_400_BAD_REQUEST)
+        attempt = project.generation_attempt + 1
+        charge_key = f"assembly:{project.id}:{attempt}"
         try:
-            reserve_credits(request.user, ASSEMBLY_COST, idempotency_key=f"assembly:{project.id}:{project.generation_attempt + 1}", project=project, note="Final video assembly")
+            reserve_credits(request.user, ASSEMBLY_COST, idempotency_key=charge_key, project=project, note="Final video assembly")
         except ValidationError as exc:
             return Response(exc.detail, status=status.HTTP_402_PAYMENT_REQUIRED)
         clips = [{"scene_number": scene.scene_number, "video_url": scene.video_url} for scene in scenes]
         width, height = get_dimensions(project.aspect_ratio)
-        charge_key = f"assembly:{project.id}:{project.generation_attempt + 1}"
         try:
             result = JSON2VideoService().create_movie_from_clips(clips=clips, width=width, height=height, project_id=project.id)
             provider_project_id = result.get("project")
             if not provider_project_id:
                 raise RuntimeError("Assembly provider did not return a project ID.")
         except Exception:
-            refund_transaction(project, idempotency_key=f"refund:{charge_key}")
+            refund_transaction(reservation_key=charge_key, idempotency_key=f"refund:{charge_key}")
             project.status = VideoProject.Status.FAILED
             project.error_message = "Video assembly provider failed."
             project.failed_at = timezone.now()
@@ -197,7 +201,7 @@ class ProjectAssembleView(OwnedProjectMixin, APIView):
         project.provider_project_id = provider_project_id
         project.status = VideoProject.Status.PROCESSING
         project.error_message = None
-        project.generation_attempt += 1
+        project.generation_attempt = attempt
         project.processing_started_at = timezone.now()
         project.completed_at = None
         project.failed_at = None
