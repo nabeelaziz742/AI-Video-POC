@@ -132,3 +132,21 @@ class CreditTransaction(models.Model):
 
     def __str__(self):
         return f"{self.kind}: {self.amount}"
+
+
+class UsageEvent(models.Model):
+    class Kind(models.TextChoices):
+        PROJECT = "project", "Project"
+        SCENE = "scene", "Scene"
+        CHARACTER_REFERENCE = "character_reference", "Character reference"
+        ASSEMBLY = "assembly", "Assembly"
+
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, related_name="video_usage_events", on_delete=models.CASCADE)
+    kind = models.CharField(max_length=30, choices=Kind.choices)
+    quantity = models.PositiveIntegerField(default=1)
+    credits = models.PositiveIntegerField(default=0)
+    project = models.ForeignKey(VideoProject, related_name="usage_events", on_delete=models.SET_NULL, null=True, blank=True)
+    scene = models.ForeignKey(VideoScene, related_name="usage_events", on_delete=models.SET_NULL, null=True, blank=True)
+    character = models.ForeignKey(Character, related_name="usage_events", on_delete=models.SET_NULL, null=True, blank=True)
+    idempotency_key = models.CharField(max_length=160, unique=True)
+    created_at = models.DateTimeField(auto_now_add=True)
