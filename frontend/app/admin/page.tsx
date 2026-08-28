@@ -330,45 +330,53 @@ export default function AdminPage() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-white/5">
-                  {users.map((u) => (
-                    <tr key={u.id} className="hover:bg-white/[0.02]">
-                      <td className="px-5 py-4">
-                        <div className="font-semibold text-white flex items-center gap-2">
-                          {u.username}
-                          {u.is_staff && (
-                            <span className="rounded bg-amber-500/10 px-1.5 py-0.5 text-[10px] text-amber-400 border border-amber-500/20">
-                              STAFF
-                            </span>
-                          )}
-                        </div>
-                        <div className="text-white/40">{u.email || "No email"}</div>
-                      </td>
-                      <td className="px-5 py-4 uppercase font-medium text-white/70">
-                        {u.plan_code} ({u.subscription_status})
-                      </td>
-                      <td className="px-5 py-4 font-semibold text-violet-300">
-                        {u.credits_balance} credits
-                      </td>
-                      <td className="px-5 py-4 text-white/50">{u.total_projects}</td>
-                      <td className="px-5 py-4 text-white/40">
-                        {new Date(u.date_joined).toLocaleDateString()}
-                      </td>
-                      <td className="px-5 py-4 text-right">
-                        <button
-                          onClick={() => {
-                            setSelectedUser(u);
-                            setCreditAdjustmentAmount(100);
-                            setCreditAdjustmentNote("Admin credit grant");
-                            setAdjustError("");
-                            setAdjustSuccess("");
-                          }}
-                          className="rounded-lg border border-white/10 px-3 py-1.5 text-xs text-white/70 hover:bg-white/10 hover:text-white"
-                        >
-                          Adjust Credits
-                        </button>
+                  {users.length === 0 ? (
+                    <tr>
+                      <td colSpan={6} className="px-5 py-8 text-center text-white/40">
+                        No users found matching your search.
                       </td>
                     </tr>
-                  ))}
+                  ) : (
+                    users.map((u) => (
+                      <tr key={u.id} className="hover:bg-white/[0.02]">
+                        <td className="px-5 py-4">
+                          <div className="font-semibold text-white flex items-center gap-2">
+                            {u.username}
+                            {u.is_staff && (
+                              <span className="rounded bg-amber-500/10 px-1.5 py-0.5 text-[10px] text-amber-400 border border-amber-500/20">
+                                STAFF
+                              </span>
+                            )}
+                          </div>
+                          <div className="text-white/40">{u.email || "No email"}</div>
+                        </td>
+                        <td className="px-5 py-4 uppercase font-medium text-white/70">
+                          {u.plan_code} ({u.subscription_status})
+                        </td>
+                        <td className="px-5 py-4 font-semibold text-violet-300">
+                          {u.credits_balance} credits
+                        </td>
+                        <td className="px-5 py-4 text-white/50">{u.total_projects}</td>
+                        <td className="px-5 py-4 text-white/40">
+                          {new Date(u.date_joined).toLocaleDateString()}
+                        </td>
+                        <td className="px-5 py-4 text-right">
+                          <button
+                            onClick={() => {
+                              setSelectedUser(u);
+                              setCreditAdjustmentAmount(100);
+                              setCreditAdjustmentNote("Admin credit grant");
+                              setAdjustError("");
+                              setAdjustSuccess("");
+                            }}
+                            className="rounded-lg border border-white/10 px-3 py-1.5 text-xs text-white/70 hover:bg-white/10 hover:text-white"
+                          >
+                            Adjust Credits
+                          </button>
+                        </td>
+                      </tr>
+                    ))
+                  )}
                 </tbody>
               </table>
             </div>
@@ -390,35 +398,43 @@ export default function AdminPage() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-white/5">
-                {projects.map((p) => (
-                  <tr key={p.id} className="hover:bg-white/[0.02]">
-                    <td className="px-5 py-4 font-medium text-white">
-                      <div>{p.title} (V{p.version_number})</div>
-                      {p.error_message && (
-                        <div className="text-[11px] text-red-400 mt-1 line-clamp-1">{p.error_message}</div>
-                      )}
+                {projects.length === 0 ? (
+                  <tr>
+                    <td colSpan={6} className="px-5 py-8 text-center text-white/40">
+                      No projects recorded on the platform yet.
                     </td>
-                    <td className="px-5 py-4 text-white/60">{p.user?.username || "Unknown"}</td>
-                    <td className="px-5 py-4">
-                      <span
-                        className={`rounded-full px-2.5 py-1 text-[10px] uppercase font-semibold tracking-wider ${
-                          p.status === "completed"
-                            ? "bg-emerald-500/10 text-emerald-400"
-                            : p.status === "failed"
-                            ? "bg-red-500/10 text-red-400"
-                            : "bg-amber-500/10 text-amber-400"
-                        }`}
-                      >
-                        {p.status}
-                      </span>
-                    </td>
-                    <td className="px-5 py-4 text-white/40">
-                      {p.duration}s · {p.aspect_ratio}
-                    </td>
-                    <td className="px-5 py-4 text-white/50">{p.scene_count}</td>
-                    <td className="px-5 py-4 text-white/40">{new Date(p.created_at).toLocaleString()}</td>
                   </tr>
-                ))}
+                ) : (
+                  projects.map((p) => (
+                    <tr key={p.id} className="hover:bg-white/[0.02]">
+                      <td className="px-5 py-4 font-medium text-white">
+                        <div>{p.title} (V{p.version_number})</div>
+                        {p.error_message && (
+                          <div className="text-[11px] text-red-400 mt-1 line-clamp-1">{p.error_message}</div>
+                        )}
+                      </td>
+                      <td className="px-5 py-4 text-white/60">{p.user?.username || "Unknown"}</td>
+                      <td className="px-5 py-4">
+                        <span
+                          className={`rounded-full px-2.5 py-1 text-[10px] uppercase font-semibold tracking-wider ${
+                            p.status === "completed"
+                              ? "bg-emerald-500/10 text-emerald-400"
+                              : p.status === "failed"
+                              ? "bg-red-500/10 text-red-400"
+                              : "bg-amber-500/10 text-amber-400"
+                          }`}
+                        >
+                          {p.status}
+                        </span>
+                      </td>
+                      <td className="px-5 py-4 text-white/40">
+                        {p.duration}s · {p.aspect_ratio}
+                      </td>
+                      <td className="px-5 py-4 text-white/50">{p.scene_count}</td>
+                      <td className="px-5 py-4 text-white/40">{new Date(p.created_at).toLocaleString()}</td>
+                    </tr>
+                  ))
+                )}
               </tbody>
             </table>
           </div>
