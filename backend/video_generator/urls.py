@@ -3,7 +3,7 @@ from django.urls import path
 from .ai_views import CharacterReferenceView, ProjectAssembleView, SceneGenerateView, SceneRegenerateView, SceneStatusView
 from .auth_views import CSRFTokenView, LoginView, LogoutView, MeView, SignupView
 from .health import HealthCheckView
-from .views import VideoProjectCreateView, VideoProjectStatusView, VideoProjectVersionsView
+from .views import CreditBalanceView, VideoProjectCreateView, VideoProjectStatusView, VideoProjectVersionsView
 
 urlpatterns = [
     path("health/", HealthCheckView.as_view(), name="health"),
@@ -12,6 +12,7 @@ urlpatterns = [
     path("auth/login/", LoginView.as_view(), name="login"),
     path("auth/logout/", LogoutView.as_view(), name="logout"),
     path("auth/me/", MeView.as_view(), name="me"),
+    path("credits/", CreditBalanceView.as_view(), name="credit-balance"),
     path("projects/", VideoProjectCreateView.as_view(), name="video-projects"),
     path("projects/<int:project_id>/versions/", VideoProjectVersionsView.as_view(), name="video-project-versions"),
     path("projects/<int:project_id>/status/", VideoProjectStatusView.as_view(), name="video-project-status"),
