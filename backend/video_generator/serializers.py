@@ -9,19 +9,7 @@ class CharacterSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Character
-        fields = [
-            "id",
-            "name",
-            "role",
-            "age_description",
-            "appearance",
-            "clothing",
-            "personality",
-            "description",
-            "visual_prompt",
-            "reference_image_url",
-            "consistency_prompt",
-        ]
+        fields = ["id", "name", "role", "age_description", "appearance", "clothing", "personality", "description", "visual_prompt", "reference_image_url", "consistency_prompt"]
         read_only_fields = ["id", "consistency_prompt"]
 
 
@@ -30,18 +18,7 @@ class VideoSceneSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = VideoScene
-        fields = [
-            "id",
-            "scene_number",
-            "duration",
-            "prompt",
-            "characters",
-            "status",
-            "provider",
-            "provider_project_id",
-            "video_url",
-            "error_message",
-        ]
+        fields = ["id", "scene_number", "duration", "prompt", "characters", "status", "provider", "provider_project_id", "video_url", "error_message", "generation_attempt", "processing_started_at", "completed_at", "failed_at"]
         read_only_fields = fields
 
 
@@ -51,35 +28,8 @@ class VideoProjectSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = VideoProject
-        fields = [
-            "id",
-            "title",
-            "input_type",
-            "prompt",
-            "aspect_ratio",
-            "duration",
-            "status",
-            "provider",
-            "provider_project_id",
-            "video_url",
-            "error_message",
-            "characters",
-            "scenes",
-            "created_at",
-            "updated_at",
-        ]
-        read_only_fields = [
-            "id",
-            "status",
-            "provider",
-            "provider_project_id",
-            "video_url",
-            "error_message",
-            "characters",
-            "scenes",
-            "created_at",
-            "updated_at",
-        ]
+        fields = ["id", "title", "input_type", "prompt", "aspect_ratio", "duration", "status", "provider", "provider_project_id", "video_url", "error_message", "generation_attempt", "processing_started_at", "completed_at", "failed_at", "characters", "scenes", "created_at", "updated_at"]
+        read_only_fields = ["id", "status", "provider", "provider_project_id", "video_url", "error_message", "generation_attempt", "processing_started_at", "completed_at", "failed_at", "characters", "scenes", "created_at", "updated_at"]
 
     def validate_duration(self, value):
         if value not in SUPPORTED_DURATIONS:
