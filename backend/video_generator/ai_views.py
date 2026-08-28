@@ -1,3 +1,4 @@
+from django.conf import settings
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from rest_framework import status
@@ -13,6 +14,7 @@ from .models import Character, VideoProject, VideoScene, UsageEvent
 from .providers import VideoProviderError, get_video_provider
 from .rate_limit import allow_request, rate_limited_response
 from .scene_planner import get_dimensions
+from .security import validate_safe_url
 from .serializers import VideoProjectSerializer, VideoSceneSerializer
 from .services import JSON2VideoService
 
@@ -123,8 +125,15 @@ class SceneStatusView(OwnedProjectMixin, APIView):
     def get(self, request, project_id, scene_id):
         project = self.get_project(request, project_id)
         scene = get_object_or_404(VideoScene, id=scene_id, project=project)
-        if not scene.provider_project_id or scene.provider == "pending" or (scene.status == VideoScene.Status.COMPLETED and scene.video_url):
+        if not scene.provider_project_id or scene.provider == "pending" or (scene.status == VideoScene.Status.COMPLETED and scene.video_url) or scene.status == VideoScene.Status.FAILED:
             return Response(VideoSceneSerializer(scene).data)
+
+        timeout_seconds = getattr(settings, "PROVIDER_JOB_TIMEOUT_SECONDS", 1800)
+        if scene.status == VideoScene.Status.PROCESSING and scene.processing_started_at:
+            if (timezone.now() - scene.processing_started_at).total_seconds() > timeout_seconds:
+                self._fail_and_refund(scene, "Scene generation timed out after exceeding the maximum processing window.")
+                return Response(VideoSceneSerializer(scene).data)
+
         try:
             provider = get_video_provider(scene.provider)
             result = provider.get_scene_result(scene.provider_project_id)
@@ -137,8 +146,8 @@ class SceneStatusView(OwnedProjectMixin, APIView):
         provider_status = result.get("status")
         if provider_status == "completed":
             video_url = result.get("video_url")
-            if not video_url:
-                self._fail_and_refund(scene, "Provider marked the scene completed but returned no video URL.")
+            if not video_url or not validate_safe_url(video_url, allow_empty=False):
+                self._fail_and_refund(scene, "Provider marked the scene completed but returned no valid video URL.")
             else:
                 scene.status = VideoScene.Status.COMPLETED
                 scene.video_url = video_url

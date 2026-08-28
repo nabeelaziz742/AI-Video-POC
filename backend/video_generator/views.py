@@ -1,3 +1,4 @@
+from django.conf import settings
 from django.db import transaction
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
@@ -11,6 +12,7 @@ from .credits import get_or_create_credit_account, refund_transaction
 from .models import Character, CreditTransaction, UsageEvent, VideoProject, VideoScene
 from .rate_limit import allow_request, rate_limited_response
 from .scene_planner import build_scene_plan, validate_generation_options
+from .security import validate_safe_url
 from .serializers import VideoProjectSerializer
 from .services import JSON2VideoService
 
@@ -144,29 +146,38 @@ class VideoProjectStatusView(APIView):
         project = VideoProject.objects.filter(id=project_id, user=request.user).prefetch_related("characters", "scenes").first()
         if not project:
             return Response({"detail": "Project not found."}, status=status.HTTP_404_NOT_FOUND)
-        if project.provider_project_id and project.provider == "json2video":
-            try:
-                result = JSON2VideoService().get_movie(project.provider_project_id)
-                movie = result.get("movie", {})
-                provider_status = movie.get("status")
-                if provider_status == "done":
-                    video_url = movie.get("url")
-                    if not video_url:
-                        self._fail_and_refund(project, "JSON2Video marked the movie done but returned no video URL.")
-                    else:
-                        project.status = VideoProject.Status.COMPLETED
-                        project.video_url = video_url
-                        project.error_message = None
-                        project.completed_at = timezone.now()
-                        project.failed_at = None
-                        project.save(update_fields=["status", "video_url", "error_message", "completed_at", "failed_at", "updated_at"])
-                elif provider_status in {"error", "timeout"}:
-                    self._fail_and_refund(project, "Video rendering failed at the assembly provider.")
+
+        timeout_seconds = getattr(settings, "PROVIDER_JOB_TIMEOUT_SECONDS", 1800)
+        if project.status == VideoProject.Status.PROCESSING and project.processing_started_at:
+            if (timezone.now() - project.processing_started_at).total_seconds() > timeout_seconds:
+                self._fail_and_refund(project, "Video assembly timed out after exceeding the maximum processing window.")
+                return Response(VideoProjectSerializer(project).data)
+
+        if not project.provider_project_id or project.provider != "json2video" or (project.status == VideoProject.Status.COMPLETED and project.video_url) or project.status == VideoProject.Status.FAILED:
+            return Response(VideoProjectSerializer(project).data)
+
+        try:
+            result = JSON2VideoService().get_movie(project.provider_project_id)
+            movie = result.get("movie", {})
+            provider_status = movie.get("status")
+            if provider_status == "done":
+                video_url = movie.get("url")
+                if not video_url or not validate_safe_url(video_url, allow_empty=False):
+                    self._fail_and_refund(project, "JSON2Video marked the movie done but returned no valid video URL.")
                 else:
-                    project.status = VideoProject.Status.PROCESSING
-                    project.save(update_fields=["status", "updated_at"])
-            except Exception:
-                self._fail_and_refund(project, "Unable to read the video assembly provider status.")
+                    project.status = VideoProject.Status.COMPLETED
+                    project.video_url = video_url
+                    project.error_message = None
+                    project.completed_at = timezone.now()
+                    project.failed_at = None
+                    project.save(update_fields=["status", "video_url", "error_message", "completed_at", "failed_at", "updated_at"])
+            elif provider_status in {"error", "timeout"}:
+                self._fail_and_refund(project, "Video rendering failed at the assembly provider.")
+            else:
+                project.status = VideoProject.Status.PROCESSING
+                project.save(update_fields=["status", "updated_at"])
+        except Exception:
+            self._fail_and_refund(project, "Unable to read the video assembly provider status.")
         return Response(VideoProjectSerializer(project).data)
 
     @staticmethod

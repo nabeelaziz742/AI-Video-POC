@@ -11,8 +11,8 @@ from rest_framework.views import APIView
 class UserSerializer(serializers.ModelSerializer):
     class Meta:
         model = User
-        fields = ["id", "username", "email", "first_name"]
-        read_only_fields = ["id"]
+        fields = ["id", "username", "email", "first_name", "is_staff", "is_superuser"]
+        read_only_fields = ["id", "is_staff", "is_superuser"]
 
 
 class CSRFTokenView(APIView):
