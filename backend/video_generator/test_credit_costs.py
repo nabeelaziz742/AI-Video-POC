@@ -9,7 +9,10 @@ class GenerationCostTests(SimpleTestCase):
         self.assertEqual(generation_cost(6), 6)
         self.assertEqual(generation_cost(10), 10)
         self.assertEqual(generation_cost(15), 15)
+        self.assertEqual(generation_cost(30), 30)
+        self.assertEqual(generation_cost(60), 60)
 
     def test_unsupported_scene_duration_has_no_charge(self):
         self.assertEqual(generation_cost(0), 0)
-        self.assertEqual(generation_cost(16), 0)
+        self.assertEqual(generation_cost(61), 0)
+        self.assertEqual(generation_cost(-5), 0)

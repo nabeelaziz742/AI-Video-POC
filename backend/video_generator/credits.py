@@ -9,7 +9,7 @@ FREE_MONTHLY_CREDITS = 100
 def generation_cost(duration: int) -> int:
     """Charge one credit per generated video second; project totals remain 10/30/60 credits."""
     duration = int(duration)
-    if duration < 1 or duration > 15:
+    if duration < 1 or duration > 60:
         return 0
     return duration
 
