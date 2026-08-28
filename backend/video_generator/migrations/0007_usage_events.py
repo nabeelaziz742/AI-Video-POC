@@ -4,7 +4,11 @@ import django.db.models.deletion
 
 
 class Migration(migrations.Migration):
-    dependencies = [("video_generator", "0006_credit_ledger"), migrations.swappable_dependency(settings.AUTH_USER_MODEL)]
+    dependencies = [
+        ("video_generator", "0006_credit_ledger"),
+        ("video_generator", "0006_billing"),
+        migrations.swappable_dependency(settings.AUTH_USER_MODEL),
+    ]
     operations = [migrations.CreateModel(name="UsageEvent", fields=[
         ("id", models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name="ID")),
         ("kind", models.CharField(choices=[("project", "Project"), ("scene", "Scene"), ("character_reference", "Character reference"), ("assembly", "Assembly")], max_length=30)),
