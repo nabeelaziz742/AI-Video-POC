@@ -28,8 +28,8 @@ class VideoProjectSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = VideoProject
-        fields = ["id", "title", "input_type", "prompt", "aspect_ratio", "duration", "status", "provider", "provider_project_id", "video_url", "error_message", "generation_attempt", "processing_started_at", "completed_at", "failed_at", "characters", "scenes", "created_at", "updated_at"]
-        read_only_fields = ["id", "status", "provider", "provider_project_id", "video_url", "error_message", "generation_attempt", "processing_started_at", "completed_at", "failed_at", "characters", "scenes", "created_at", "updated_at"]
+        fields = ["id", "title", "version_group", "version_number", "input_type", "prompt", "aspect_ratio", "duration", "status", "provider", "provider_project_id", "video_url", "error_message", "generation_attempt", "processing_started_at", "completed_at", "failed_at", "characters", "scenes", "created_at", "updated_at"]
+        read_only_fields = ["id", "version_group", "version_number", "status", "provider", "provider_project_id", "video_url", "error_message", "generation_attempt", "processing_started_at", "completed_at", "failed_at", "characters", "scenes", "created_at", "updated_at"]
 
     def validate_duration(self, value):
         if value not in SUPPORTED_DURATIONS:
