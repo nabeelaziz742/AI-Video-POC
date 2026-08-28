@@ -17,7 +17,9 @@ class SceneGenerationSafetyTests(TestCase):
     def setUp(self):
         self.factory = APIRequestFactory()
         self.user = User.objects.create_user(username="creator", password="StrongPass123")
-        get_or_create_credit_account(self.user)
+        account = get_or_create_credit_account(self.user)
+        account.balance = 100
+        account.save(update_fields=["balance", "updated_at"])
         self.project = VideoProject.objects.create(user=self.user, title="Test Project", prompt="A farmer story", duration=10, aspect_ratio="9:16")
         self.character = Character.objects.create(project=self.project, name="Farmer", appearance="friendly farmer", reference_image_url="https://example.com/farmer.png")
         self.scene = VideoScene.objects.create(project=self.project, scene_number=1, duration=10, prompt="The farmer walks.")
