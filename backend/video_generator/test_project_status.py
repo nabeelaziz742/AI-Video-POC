@@ -21,7 +21,7 @@ class ProjectStatusTests(TestCase):
         get_movie.return_value = {"movie": {"status": "done", "url": "https://example.com/final.mp4"}}; response = VideoProjectStatusView.as_view()(self.request(), project_id=self.project.id); self.assertEqual(response.status_code, 200); self.project.refresh_from_db(); self.assertEqual(self.project.status, VideoProject.Status.COMPLETED); self.assertEqual(self.project.video_url, "https://example.com/final.mp4")
     @patch("video_generator.views.JSON2VideoService.get_movie")
     def test_provider_error_marks_project_failed(self, get_movie):
-        get_movie.return_value = {"movie": {"status": "error", "message": "render failed"}}; VideoProjectStatusView.as_view()(self.request(), project_id=self.project.id); self.project.refresh_from_db(); self.assertEqual(self.project.status, VideoProject.Status.FAILED); self.assertEqual(self.project.error_message, "render failed")
+        get_movie.return_value = {"movie": {"status": "error", "message": "render failed"}}; VideoProjectStatusView.as_view()(self.request(), project_id=self.project.id); self.project.refresh_from_db(); self.assertEqual(self.project.status, VideoProject.Status.FAILED); self.assertEqual(self.project.error_message, "Video rendering failed at the assembly provider.")
     @patch("video_generator.views.JSON2VideoService.get_movie")
     def test_running_movie_keeps_project_processing(self, get_movie):
         get_movie.return_value = {"movie": {"status": "running"}}; VideoProjectStatusView.as_view()(self.request(), project_id=self.project.id); self.project.refresh_from_db(); self.assertEqual(self.project.status, VideoProject.Status.PROCESSING)
