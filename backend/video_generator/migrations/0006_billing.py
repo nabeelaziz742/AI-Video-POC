@@ -4,7 +4,7 @@ import django.db.models.deletion
 
 
 class Migration(migrations.Migration):
-    dependencies = [("video_generator", "0005_credit_ledger")]
+    dependencies = [("video_generator", "0005_project_versioning"), migrations.swappable_dependency(settings.AUTH_USER_MODEL)]
 
     operations = [
         migrations.CreateModel(
