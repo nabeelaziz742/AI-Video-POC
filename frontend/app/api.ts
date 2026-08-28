@@ -4,8 +4,8 @@ export type ProjectStatus = "draft" | "queued" | "processing" | "completed" | "f
 
 export interface User { id: number; username: string; email: string; first_name: string; }
 export interface Character { id: number; name: string; role: string; age_description: string; appearance: string; clothing: string; personality: string; description: string; visual_prompt: string; reference_image_url: string | null; consistency_prompt: string; }
-export interface VideoScene { id: number; scene_number: number; duration: number; prompt: string; characters: Character[]; status: SceneStatus; provider: string; provider_project_id: string | null; video_url: string | null; error_message: string | null; }
-export interface VideoProject { id: number; title: string; input_type: InputType; prompt: string; aspect_ratio: string; duration: number; status: ProjectStatus; provider: string; provider_project_id: string | null; video_url: string | null; error_message: string | null; characters: Character[]; scenes: VideoScene[]; created_at?: string; updated_at?: string; }
+export interface VideoScene { id: number; scene_number: number; duration: number; prompt: string; characters: Character[]; status: SceneStatus; provider: string; provider_project_id: string | null; video_url: string | null; error_message: string | null; generation_attempt: number; processing_started_at: string | null; completed_at: string | null; failed_at: string | null; }
+export interface VideoProject { id: number; title: string; version_group: string; version_number: number; input_type: InputType; prompt: string; aspect_ratio: string; duration: number; status: ProjectStatus; provider: string; provider_project_id: string | null; video_url: string | null; error_message: string | null; generation_attempt: number; processing_started_at: string | null; completed_at: string | null; failed_at: string | null; characters: Character[]; scenes: VideoScene[]; created_at?: string; updated_at?: string; }
 
 export const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:9000/api/video";
 
