@@ -3,6 +3,7 @@ from rest_framework.test import APIRequestFactory
 
 from .models import Character, VideoProject, VideoScene
 from .providers import FalPixVerseC1Provider, VideoProviderError
+from .rate_limit import allow_request
 from .scene_planner import build_scene_plan, get_dimensions, validate_generation_options
 from .views import VideoProjectCreateView
 
@@ -37,19 +38,8 @@ class GenerationOptionsTests(TestCase):
 class CharacterSceneModelTests(TestCase):
     def test_character_and_scene_are_linked_to_project(self):
         project = VideoProject.objects.create(title="Farmer Story", prompt="A farmer story")
-        character = Character.objects.create(
-            project=project,
-            name="Farmer",
-            role="Main character",
-            appearance="Friendly 3D cartoon farmer",
-            clothing="Blue shalwar kameez",
-        )
-        scene = VideoScene.objects.create(
-            project=project,
-            scene_number=1,
-            duration=10,
-            prompt="The farmer walks through the village.",
-        )
+        character = Character.objects.create(project=project, name="Farmer", role="Main character", appearance="Friendly 3D cartoon farmer", clothing="Blue shalwar kameez")
+        scene = VideoScene.objects.create(project=project, scene_number=1, duration=10, prompt="The farmer walks through the village.")
         scene.characters.add(character)
         self.assertEqual(project.characters.count(), 1)
         self.assertEqual(project.scenes.count(), 1)
@@ -65,17 +55,7 @@ class CharacterSceneModelTests(TestCase):
 class ProjectPlanningAPITests(TestCase):
     def test_project_creation_only_plans_scenes(self):
         factory = APIRequestFactory()
-        request = factory.post(
-            "/projects/",
-            {
-                "title": "Farmer Story",
-                "prompt": "A farmer walks with his buffalo.",
-                "duration": 10,
-                "aspect_ratio": "9:16",
-                "characters": [{"name": "Farmer", "appearance": "friendly 3D cartoon farmer"}],
-            },
-            format="json",
-        )
+        request = factory.post("/projects/", {"title": "Farmer Story", "prompt": "A farmer walks with his buffalo.", "duration": 10, "aspect_ratio": "9:16", "characters": [{"name": "Farmer", "appearance": "friendly 3D cartoon farmer"}]}, format="json")
         response = VideoProjectCreateView.as_view()(request)
         self.assertEqual(response.status_code, 201)
         project = VideoProject.objects.get(id=response.data["id"])
@@ -85,30 +65,12 @@ class ProjectPlanningAPITests(TestCase):
 
     def test_project_requires_character(self):
         factory = APIRequestFactory()
-        request = factory.post(
-            "/projects/",
-            {"title": "Story", "prompt": "A farmer story", "duration": 10, "characters": []},
-            format="json",
-        )
-        response = VideoProjectCreateView.as_view()(request)
-        self.assertEqual(response.status_code, 400)
+        request = factory.post("/projects/", {"title": "Story", "prompt": "A farmer story", "duration": 10, "characters": []}, format="json")
+        self.assertEqual(VideoProjectCreateView.as_view()(request).status_code, 400)
 
     def test_every_planned_scene_contains_all_recurring_characters(self):
         factory = APIRequestFactory()
-        request = factory.post(
-            "/projects/",
-            {
-                "title": "Farmer Story",
-                "prompt": "A farmer talks to his friend.",
-                "duration": 30,
-                "aspect_ratio": "9:16",
-                "characters": [
-                    {"name": "Farmer", "appearance": "friendly farmer"},
-                    {"name": "Friend", "appearance": "friendly village friend"},
-                ],
-            },
-            format="json",
-        )
+        request = factory.post("/projects/", {"title": "Farmer Story", "prompt": "A farmer talks to his friend.", "duration": 30, "aspect_ratio": "9:16", "characters": [{"name": "Farmer", "appearance": "friendly farmer"}, {"name": "Friend", "appearance": "friendly village friend"}]}, format="json")
         response = VideoProjectCreateView.as_view()(request)
         self.assertEqual(response.status_code, 201)
         project = VideoProject.objects.get(id=response.data["id"])
@@ -125,36 +87,25 @@ class PixVerseProviderValidationTests(TestCase):
     def test_scene_duration_is_limited_to_provider_range(self):
         provider = object.__new__(FalPixVerseC1Provider)
         with self.assertRaises(VideoProviderError):
-            provider._arguments(
-                prompt="walk",
-                duration=16,
-                aspect_ratio="9:16",
-                references=[{"image_url": "https://example.com/farmer.png", "ref_name": "character1"}],
-            )
+            provider._arguments(prompt="walk", duration=16, aspect_ratio="9:16", references=[{"image_url": "https://example.com/farmer.png", "ref_name": "character1"}])
 
     def test_prompt_references_character(self):
         provider = object.__new__(FalPixVerseC1Provider)
-        args = provider._arguments(
-            prompt="The farmer walks through the village.",
-            duration=5,
-            aspect_ratio="9:16",
-            reference_image_url="https://example.com/farmer.png",
-        )
+        args = provider._arguments(prompt="The farmer walks through the village.", duration=5, aspect_ratio="9:16", reference_image_url="https://example.com/farmer.png")
         self.assertIn("@character", args["prompt"])
         self.assertEqual(args["image_references"][0]["type"], "subject")
 
     def test_multiple_character_references_are_preserved(self):
         provider = object.__new__(FalPixVerseC1Provider)
-        references = [
-            {"image_url": "https://example.com/farmer.png", "type": "subject", "ref_name": "character1"},
-            {"image_url": "https://example.com/friend.png", "type": "subject", "ref_name": "character2"},
-        ]
-        args = provider._arguments(
-            prompt="The farmer talks to his friend.",
-            duration=5,
-            aspect_ratio="9:16",
-            references=references,
-        )
+        references = [{"image_url": "https://example.com/farmer.png", "type": "subject", "ref_name": "character1"}, {"image_url": "https://example.com/friend.png", "type": "subject", "ref_name": "character2"}]
+        args = provider._arguments(prompt="The farmer talks to his friend.", duration=5, aspect_ratio="9:16", references=references)
         self.assertEqual(len(args["image_references"]), 2)
         self.assertIn("@character1", args["prompt"])
         self.assertIn("@character2", args["prompt"])
+
+
+class RateLimitTests(TestCase):
+    def test_rate_limit_blocks_after_limit(self):
+        request = APIRequestFactory().post("/projects/")
+        self.assertTrue(allow_request(request, "test-limit", limit=1, window=60))
+        self.assertFalse(allow_request(request, "test-limit", limit=1, window=60))
