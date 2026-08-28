@@ -12,8 +12,10 @@ export function VersionHistory({ project, onSelect }: Props) {
   const [error, setError] = useState("");
 
   useEffect(() => {
+    const promptTimer = window.setTimeout(() => setPrompt(project.prompt), 0);
     api<VideoProject[]>(`/projects/${project.id}/versions/`).then(setVersions).catch(() => setVersions([]));
-  }, [project.id]);
+    return () => window.clearTimeout(promptTimer);
+  }, [project.id, project.prompt]);
 
   async function createVersion() {
     if (!prompt.trim() || prompt.trim() === project.prompt.trim()) return;
