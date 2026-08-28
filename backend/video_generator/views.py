@@ -8,6 +8,7 @@ from .models import Character, VideoProject, VideoScene
 from .rate_limit import allow_request, rate_limited_response
 from .scene_planner import build_scene_plan, validate_generation_options
 from .serializers import VideoProjectSerializer
+from .services import JSON2VideoService
 
 
 class VideoProjectCreateView(APIView):
@@ -42,18 +43,8 @@ class VideoProjectCreateView(APIView):
         except (TypeError, ValueError) as exc:
             return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
         with transaction.atomic():
-            project = VideoProject.objects.create(
-                user=request.user, title=title, prompt=prompt, input_type=input_type,
-                aspect_ratio=aspect_ratio, duration=duration, status=VideoProject.Status.QUEUED,
-                provider="fal_pixverse_c1",
-            )
-            characters = [Character.objects.create(
-                project=project, name=str(item["name"]).strip(), role=str(item.get("role", "")).strip(),
-                age_description=str(item.get("age_description", "")).strip(), appearance=str(item.get("appearance", "")).strip(),
-                clothing=str(item.get("clothing", "")).strip(), personality=str(item.get("personality", "")).strip(),
-                description=str(item.get("description", "")).strip(), visual_prompt=str(item.get("visual_prompt", "")).strip(),
-                reference_image_url=item.get("reference_image_url") or None,
-            ) for item in normalized_characters]
+            project = VideoProject.objects.create(user=request.user, title=title, prompt=prompt, input_type=input_type, aspect_ratio=aspect_ratio, duration=duration, status=VideoProject.Status.QUEUED, provider="fal_pixverse_c1")
+            characters = [Character.objects.create(project=project, name=str(item["name"]).strip(), role=str(item.get("role", "")).strip(), age_description=str(item.get("age_description", "")).strip(), appearance=str(item.get("appearance", "")).strip(), clothing=str(item.get("clothing", "")).strip(), personality=str(item.get("personality", "")).strip(), description=str(item.get("description", "")).strip(), visual_prompt=str(item.get("visual_prompt", "")).strip(), reference_image_url=item.get("reference_image_url") or None) for item in normalized_characters]
             character_block = "\nCharacter continuity: " + "; ".join(character.consistency_prompt for character in characters) + ". Keep recurring characters visually identical across scenes."
             scenes = [VideoScene(project=project, scene_number=scene["scene_number"], duration=scene["duration"], prompt=scene["prompt"] + character_block) for scene in scene_plan]
             VideoScene.objects.bulk_create(scenes)
@@ -70,7 +61,6 @@ class VideoProjectStatusView(APIView):
         if not project:
             return Response({"detail": "Project not found."}, status=status.HTTP_404_NOT_FOUND)
         if project.provider_project_id and project.provider == "json2video":
-            from .services import JSON2VideoService
             try:
                 result = JSON2VideoService().get_movie(project.provider_project_id)
                 movie = result.get("movie", {})
