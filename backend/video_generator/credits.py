@@ -47,17 +47,20 @@ def record_usage(user, *, kind, credits, idempotency_key, project=None, scene=No
         return UsageEvent.objects.create(user=user, kind=kind, quantity=1, credits=credits, project=project, scene=scene, character=character, idempotency_key=idempotency_key)
 
 
-def refund_transaction(project, *, idempotency_key: str) -> int:
+def refund_transaction(*, reservation_key: str, idempotency_key: str) -> int:
     with transaction.atomic():
-        reservation = CreditTransaction.objects.select_related("account").filter(project=project, kind=CreditTransaction.Kind.RESERVE).order_by("-created_at").first()
+        reservation = CreditTransaction.objects.select_related("account").filter(idempotency_key=reservation_key, kind=CreditTransaction.Kind.RESERVE).first()
         if not reservation or CreditTransaction.objects.filter(idempotency_key=idempotency_key).exists():
             return 0
         account = CreditAccount.objects.select_for_update().get(pk=reservation.account_id)
         account.balance += reservation.amount
         account.save(update_fields=["balance", "updated_at"])
-        CreditTransaction.objects.create(account=account, kind=CreditTransaction.Kind.REFUND, amount=reservation.amount, project=project, idempotency_key=idempotency_key, note="Generation failed before completion")
+        CreditTransaction.objects.create(account=account, kind=CreditTransaction.Kind.REFUND, amount=reservation.amount, project=reservation.project, idempotency_key=idempotency_key, note="Generation failed before completion")
         return reservation.amount
 
 
 def refund_generation(project: VideoProject, *, idempotency_key: str) -> int:
-    return refund_transaction(project, idempotency_key=idempotency_key)
+    reservation = CreditTransaction.objects.filter(project=project, kind=CreditTransaction.Kind.RESERVE).order_by("-created_at").first()
+    if not reservation:
+        return 0
+    return refund_transaction(reservation_key=reservation.idempotency_key, idempotency_key=idempotency_key)
