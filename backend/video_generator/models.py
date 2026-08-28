@@ -1,3 +1,4 @@
+from django.conf import settings
 from django.db import models
 
 
@@ -13,6 +14,13 @@ class VideoProject(models.Model):
         COMPLETED = "completed", "Completed"
         FAILED = "failed", "Failed"
 
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        related_name="video_projects",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+    )
     title = models.CharField(max_length=255)
     input_type = models.CharField(max_length=20, choices=InputType.choices, default=InputType.STORY)
     prompt = models.TextField()
@@ -51,16 +59,7 @@ class Character(models.Model):
 
     @property
     def consistency_prompt(self):
-        parts = [
-            self.name,
-            self.role,
-            self.age_description,
-            self.appearance,
-            self.clothing,
-            self.personality,
-            self.description,
-            self.visual_prompt,
-        ]
+        parts = [self.name, self.role, self.age_description, self.appearance, self.clothing, self.personality, self.description, self.visual_prompt]
         return ", ".join(part.strip() for part in parts if part and part.strip())
 
     def __str__(self):
@@ -88,9 +87,7 @@ class VideoScene(models.Model):
 
     class Meta:
         ordering = ["scene_number"]
-        constraints = [
-            models.UniqueConstraint(fields=["project", "scene_number"], name="unique_project_scene_number")
-        ]
+        constraints = [models.UniqueConstraint(fields=["project", "scene_number"], name="unique_project_scene_number")]
 
     def __str__(self):
         return f"{self.project.title} — Scene {self.scene_number}"
