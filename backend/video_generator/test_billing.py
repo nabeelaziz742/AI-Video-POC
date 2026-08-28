@@ -97,8 +97,8 @@ class BillingApiTests(TestCase):
         self.assertEqual(response.data["status"], "active")
         self.assertEqual(CreditAccount.objects.get(user=self.user).balance, 100)
 
-    @patch("video_generator.billing.create_checkout_session", return_value="https://checkout.stripe.test/session")
-    @patch("video_generator.billing.stripe_configured", return_value=True)
+    @patch("video_generator.billing_views.create_checkout_session", return_value="https://checkout.stripe.test/session")
+    @patch("video_generator.billing_views.stripe_configured", return_value=True)
     def test_paid_change_returns_checkout_without_activating_plan(self, configured, checkout):
         response = self.client.post("/api/video/billing/subscription/change/", {"plan_code": "pro"}, format="json")
         self.assertEqual(response.status_code, 200)
