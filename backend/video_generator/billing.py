@@ -84,6 +84,23 @@ def create_checkout_session(user, plan_code: str) -> str:
     return response.json()["url"]
 
 
+def cancel_paid_subscription(user) -> bool:
+    subscription = ensure_subscription(user)
+    if subscription.plan_code == Subscription.Plan.FREE or not subscription.provider_subscription_id:
+        return False
+    if not stripe_configured():
+        raise RuntimeError("Stripe is not configured.")
+    headers = {"Authorization": f"Bearer {os.environ['STRIPE_SECRET_KEY']}", "Idempotency-Key": f"cancel:{subscription.provider_subscription_id}"}
+    response = requests.post(f"https://api.stripe.com/v1/subscriptions/{subscription.provider_subscription_id}", headers=headers, data={"cancel_at_period_end": "true"}, timeout=15)
+    response.raise_for_status()
+    payload = response.json()
+    subscription.cancel_at_period_end = bool(payload.get("cancel_at_period_end", True))
+    subscription.current_period_start = _unix_datetime(payload.get("current_period_start"))
+    subscription.current_period_end = _unix_datetime(payload.get("current_period_end"))
+    subscription.save(update_fields=["cancel_at_period_end", "current_period_start", "current_period_end", "updated_at"])
+    return True
+
+
 def verify_stripe_signature(payload: bytes, signature: str, secret: str) -> None:
     timestamp = None
     signatures = []
