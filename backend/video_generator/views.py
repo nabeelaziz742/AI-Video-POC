@@ -7,12 +7,23 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from .billing import ensure_subscription, get_plan
 from .credits import get_or_create_credit_account, refund_transaction
 from .models import Character, CreditTransaction, UsageEvent, VideoProject, VideoScene
 from .rate_limit import allow_request, rate_limited_response
 from .scene_planner import build_scene_plan, validate_generation_options
 from .serializers import VideoProjectSerializer
 from .services import JSON2VideoService
+
+
+def _validate_plan_duration(user, duration):
+    subscription = ensure_subscription(user)
+    if subscription.status not in {subscription.Status.ACTIVE, subscription.Status.TRIALING}:
+        return "Your subscription is not active. Please update your plan before generating a video."
+    plan = get_plan(subscription.plan_code)
+    if duration > plan.max_duration:
+        return f"Your {plan.name} plan supports videos up to {plan.max_duration} seconds."
+    return None
 
 
 class VideoProjectCreateView(APIView):
@@ -38,6 +49,9 @@ class VideoProjectCreateView(APIView):
             return Response({"detail": "At least one recurring character is required for AI character video generation."}, status=status.HTTP_400_BAD_REQUEST)
         try:
             duration, aspect_ratio = validate_generation_options(request.data.get("duration", 10), aspect_ratio)
+            plan_error = _validate_plan_duration(request.user, duration)
+            if plan_error:
+                return Response({"detail": plan_error}, status=status.HTTP_402_PAYMENT_REQUIRED)
             scene_plan = build_scene_plan(prompt, duration)
             normalized_characters = []
             for item in characters_input:
@@ -107,6 +121,9 @@ class VideoProjectVersionsView(APIView):
             return Response({"detail": "input_type must be story or script."}, status=status.HTTP_400_BAD_REQUEST)
         try:
             duration, aspect_ratio = validate_generation_options(duration, aspect_ratio)
+            plan_error = _validate_plan_duration(request.user, duration)
+            if plan_error:
+                return Response({"detail": plan_error}, status=status.HTTP_402_PAYMENT_REQUIRED)
             scene_plan = build_scene_plan(prompt, duration)
         except (TypeError, ValueError) as exc:
             return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
