@@ -55,6 +55,7 @@ class Character(models.Model):
     description = models.TextField(blank=True)
     visual_prompt = models.TextField(blank=True)
     reference_image_url = models.URLField(blank=True, null=True)
+    reference_generation_attempt = models.PositiveIntegerField(default=0)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
