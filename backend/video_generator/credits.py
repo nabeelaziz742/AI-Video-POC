@@ -3,9 +3,28 @@ from rest_framework.exceptions import ValidationError
 
 from .models import CreditAccount, CreditTransaction, VideoProject
 
+FREE_MONTHLY_CREDITS = 100
+
 
 def generation_cost(duration: int) -> int:
     return {10: 10, 30: 30, 60: 60}.get(int(duration), 0)
+
+
+def get_or_create_credit_account(user):
+    with transaction.atomic():
+        account, created = CreditAccount.objects.select_for_update().get_or_create(
+            user=user,
+            defaults={"balance": FREE_MONTHLY_CREDITS, "monthly_allowance": FREE_MONTHLY_CREDITS},
+        )
+        if created:
+            CreditTransaction.objects.create(
+                account=account,
+                kind=CreditTransaction.Kind.GRANT,
+                amount=FREE_MONTHLY_CREDITS,
+                idempotency_key=f"signup-grant:{user.pk}",
+                note="Initial free allowance",
+            )
+        return account
 
 
 def reserve_generation(user, project: VideoProject, *, idempotency_key: str) -> int:
@@ -13,7 +32,8 @@ def reserve_generation(user, project: VideoProject, *, idempotency_key: str) -> 
     if not cost:
         raise ValidationError("Unsupported generation duration.")
     with transaction.atomic():
-        account, _ = CreditAccount.objects.select_for_update().get_or_create(user=user)
+        account = get_or_create_credit_account(user)
+        account = CreditAccount.objects.select_for_update().get(pk=account.pk)
         existing = CreditTransaction.objects.filter(idempotency_key=idempotency_key).first()
         if existing:
             return existing.amount
