@@ -51,7 +51,7 @@ class BillingLifecycleTests(TestCase):
         self.subscription.provider_subscription_id = "sub_2"
         self.subscription.provider = "stripe"
         self.subscription.save()
-        event = {"id": "evt_invoice_1", "type": "invoice.paid", "data": {"subscription": "sub_2"}}
+        event = {"id": "evt_invoice_1", "type": "invoice.paid", "data": {"object": {"subscription": "sub_2"}}}
         self.assertTrue(handle_stripe_event(event))
         self.assertFalse(handle_stripe_event(event))
         account = CreditAccount.objects.get(user=self.user)
@@ -62,7 +62,7 @@ class BillingLifecycleTests(TestCase):
         self.subscription.provider_subscription_id = "sub_3"
         self.subscription.provider = "stripe"
         self.subscription.save()
-        event = {"id": "evt_failed_1", "type": "invoice.payment_failed", "data": {"subscription": "sub_3"}}
+        event = {"id": "evt_failed_1", "type": "invoice.payment_failed", "data": {"object": {"subscription": "sub_3"}}}
         handle_stripe_event(event)
         self.subscription.refresh_from_db()
         self.assertEqual(self.subscription.status, Subscription.Status.PAST_DUE)
@@ -82,6 +82,7 @@ class BillingLifecycleTests(TestCase):
 class BillingApiTests(TestCase):
     def setUp(self):
         self.user = get_user_model().objects.create_user(username="api-billing", password="pass12345")
+        Subscription.objects.create(user=self.user)
         self.client = APIClient()
         self.client.force_authenticate(self.user)
 
