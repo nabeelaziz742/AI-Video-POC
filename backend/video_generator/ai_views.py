@@ -34,7 +34,6 @@ class CharacterReferenceView(OwnedProjectMixin, APIView):
         character = get_object_or_404(Character, id=character_id, project=project)
         if character.reference_image_url and not request.data.get("force"):
             return Response({"character": character.id, "reference_image_url": character.reference_image_url, "reused": True})
-
         attempt = character.reference_generation_attempt + 1
         character.reference_generation_attempt = attempt
         character.save(update_fields=["reference_generation_attempt"])
@@ -121,7 +120,6 @@ class SceneStatusView(OwnedProjectMixin, APIView):
         except Exception:
             self._fail_and_refund(scene, "Unable to read the AI scene generation status.")
             return Response({"detail": scene.error_message}, status=status.HTTP_502_BAD_GATEWAY)
-
         provider_status = result.get("status")
         if provider_status == "completed":
             video_url = result.get("video_url")
@@ -147,9 +145,8 @@ class SceneStatusView(OwnedProjectMixin, APIView):
         scene.error_message = message
         scene.failed_at = timezone.now()
         scene.save(update_fields=["status", "error_message", "failed_at"])
-        reservation = scene.project.credit_transactions.filter(kind="reserve").order_by("-created_at").first()
-        if reservation:
-            refund_transaction(reservation_key=reservation.idempotency_key, idempotency_key=f"refund:{reservation.idempotency_key}")
+        reservation_key = f"scene-generation:{scene.id}:{scene.generation_attempt}"
+        refund_transaction(reservation_key=reservation_key, idempotency_key=f"refund:{reservation_key}")
 
 
 class SceneRegenerateView(SceneGenerateView):
@@ -180,6 +177,8 @@ class ProjectAssembleView(OwnedProjectMixin, APIView):
         if not scenes or any(scene.status != VideoScene.Status.COMPLETED or not scene.video_url for scene in scenes):
             return Response({"detail": "All scenes must be completed and have a video URL before assembly."}, status=status.HTTP_400_BAD_REQUEST)
         attempt = project.generation_attempt + 1
+        project.generation_attempt = attempt
+        project.save(update_fields=["generation_attempt"])
         charge_key = f"assembly:{project.id}:{attempt}"
         try:
             reserve_credits(request.user, ASSEMBLY_COST, idempotency_key=charge_key, project=project, note="Final video assembly")
@@ -203,10 +202,9 @@ class ProjectAssembleView(OwnedProjectMixin, APIView):
         project.provider_project_id = provider_project_id
         project.status = VideoProject.Status.PROCESSING
         project.error_message = None
-        project.generation_attempt = attempt
         project.processing_started_at = timezone.now()
         project.completed_at = None
         project.failed_at = None
-        project.save(update_fields=["provider", "provider_project_id", "status", "error_message", "generation_attempt", "processing_started_at", "completed_at", "failed_at", "updated_at"])
+        project.save(update_fields=["provider", "provider_project_id", "status", "error_message", "processing_started_at", "completed_at", "failed_at", "updated_at"])
         record_usage(request.user, kind=UsageEvent.Kind.ASSEMBLY, credits=ASSEMBLY_COST, idempotency_key=f"usage:{charge_key}", project=project)
         return Response(VideoProjectSerializer(project).data, status=status.HTTP_202_ACCEPTED)
