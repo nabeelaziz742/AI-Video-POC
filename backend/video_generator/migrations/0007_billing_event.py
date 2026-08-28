@@ -2,7 +2,7 @@ from django.db import migrations, models
 
 
 class Migration(migrations.Migration):
-    dependencies = [("video_generator", "0006_billing")]
+    dependencies = [("video_generator", "0008_character_reference_attempt")]
 
     operations = [migrations.CreateModel(
         name="BillingEvent",
