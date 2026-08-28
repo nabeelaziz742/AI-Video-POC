@@ -4,14 +4,16 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from .models import Character, VideoProject, VideoScene
+from .rate_limit import allow_request, rate_limited_response
 from .scene_planner import build_scene_plan, validate_generation_options
 from .serializers import VideoProjectSerializer
 
 
 class VideoProjectCreateView(APIView):
     """Create the project plan only; expensive AI rendering starts explicitly per scene."""
-
     def post(self, request):
+        if not allow_request(request, "project-create", limit=10, window=60):
+            return rate_limited_response()
         title = str(request.data.get("title", "Untitled Video")).strip() or "Untitled Video"
         prompt = str(request.data.get("prompt", "")).strip()
         input_type = request.data.get("input_type", "story")
@@ -46,9 +48,8 @@ class VideoProjectCreateView(APIView):
 
 class VideoProjectStatusView(APIView):
     def get(self, request, project_id):
-        try:
-            project = VideoProject.objects.get(id=project_id)
-        except VideoProject.DoesNotExist:
+        project = VideoProject.objects.filter(id=project_id).first()
+        if not project:
             return Response({"detail": "Project not found."}, status=status.HTTP_404_NOT_FOUND)
         if project.provider_project_id and project.provider == "json2video":
             from .services import JSON2VideoService
@@ -59,22 +60,14 @@ class VideoProjectStatusView(APIView):
                 if provider_status == "done":
                     video_url = movie.get("url")
                     if not video_url:
-                        project.status = VideoProject.Status.FAILED
-                        project.error_message = "JSON2Video marked the movie done but returned no video URL."
+                        project.status = VideoProject.Status.FAILED; project.error_message = "JSON2Video marked the movie done but returned no video URL."
                     else:
-                        project.status = VideoProject.Status.COMPLETED
-                        project.video_url = video_url
-                        project.error_message = None
+                        project.status = VideoProject.Status.COMPLETED; project.video_url = video_url; project.error_message = None
                     project.save(update_fields=["status", "video_url", "error_message", "updated_at"])
                 elif provider_status in {"error", "timeout"}:
-                    project.status = VideoProject.Status.FAILED
-                    project.error_message = movie.get("message", "Video generation failed.")
-                    project.save(update_fields=["status", "error_message", "updated_at"])
+                    project.status = VideoProject.Status.FAILED; project.error_message = "Video rendering failed at the assembly provider."; project.save(update_fields=["status", "error_message", "updated_at"])
                 else:
-                    project.status = VideoProject.Status.PROCESSING
-                    project.save(update_fields=["status", "updated_at"])
-            except Exception as exc:
-                project.status = VideoProject.Status.FAILED
-                project.error_message = str(exc)
-                project.save(update_fields=["status", "error_message", "updated_at"])
+                    project.status = VideoProject.Status.PROCESSING; project.save(update_fields=["status", "updated_at"])
+            except Exception:
+                project.status = VideoProject.Status.FAILED; project.error_message = "Unable to read the video assembly provider status."; project.save(update_fields=["status", "error_message", "updated_at"])
         return Response(VideoProjectSerializer(project).data)
