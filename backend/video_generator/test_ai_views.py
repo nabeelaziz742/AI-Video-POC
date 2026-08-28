@@ -5,6 +5,7 @@ from django.test import TestCase
 from rest_framework.test import APIRequestFactory
 
 from .ai_views import SceneGenerateView, SceneRegenerateView
+from .credits import get_or_create_credit_account
 from .models import Character, VideoProject, VideoScene
 
 
@@ -16,6 +17,7 @@ class SceneGenerationSafetyTests(TestCase):
     def setUp(self):
         self.factory = APIRequestFactory()
         self.user = User.objects.create_user(username="creator", password="StrongPass123")
+        get_or_create_credit_account(self.user)
         self.project = VideoProject.objects.create(user=self.user, title="Test Project", prompt="A farmer story", duration=10, aspect_ratio="9:16")
         self.character = Character.objects.create(project=self.project, name="Farmer", appearance="friendly farmer", reference_image_url="https://example.com/farmer.png")
         self.scene = VideoScene.objects.create(project=self.project, scene_number=1, duration=5, prompt="The farmer walks.")
