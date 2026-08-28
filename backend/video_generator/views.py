@@ -50,6 +50,7 @@ class VideoProjectCreateView(APIView):
             try:
                 reserve_generation(request.user, project, idempotency_key=f"project:{project.id}:generation:1")
             except Exception as exc:
+                project.delete()
                 return Response(exc.detail if hasattr(exc, "detail") else {"detail": str(exc)}, status=status.HTTP_402_PAYMENT_REQUIRED)
             characters = [Character.objects.create(project=project, name=str(item["name"]).strip(), role=str(item.get("role", "")).strip(), age_description=str(item.get("age_description", "")).strip(), appearance=str(item.get("appearance", "")).strip(), clothing=str(item.get("clothing", "")).strip(), personality=str(item.get("personality", "")).strip(), description=str(item.get("description", "")).strip(), visual_prompt=str(item.get("visual_prompt", "")).strip(), reference_image_url=item.get("reference_image_url") or None) for item in normalized_characters]
             character_block = "\nCharacter continuity: " + "; ".join(character.consistency_prompt for character in characters) + ". Keep recurring characters visually identical across scenes."
@@ -119,6 +120,7 @@ class VideoProjectVersionsView(APIView):
             try:
                 reserve_generation(request.user, version, idempotency_key=f"project:{version.id}:generation:1")
             except Exception as exc:
+                version.delete()
                 return Response(exc.detail if hasattr(exc, "detail") else {"detail": str(exc)}, status=status.HTTP_402_PAYMENT_REQUIRED)
             characters = [Character.objects.create(project=version, **item) for item in normalized]
             character_block = "\nCharacter continuity: " + "; ".join(c.consistency_prompt for c in characters) + ". Keep recurring characters visually identical across scenes."
