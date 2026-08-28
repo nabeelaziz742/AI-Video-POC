@@ -1,4 +1,5 @@
 from django.contrib.auth.models import User
+from django.core.cache import cache
 from django.test import TestCase
 from rest_framework.test import APIRequestFactory
 
@@ -62,4 +63,5 @@ class PixVerseProviderValidationTests(TestCase):
 
 class RateLimitTests(TestCase):
     def test_rate_limit_blocks_after_limit(self):
+        cache.clear()
         request = APIRequestFactory().post("/projects/"); self.assertTrue(allow_request(request, "test-limit", limit=1, window=60)); self.assertFalse(allow_request(request, "test-limit", limit=1, window=60))
