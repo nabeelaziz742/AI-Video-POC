@@ -24,6 +24,8 @@ class BillingLifecycleTests(TestCase):
         verify_stripe_signature(payload, f"t={timestamp},v1={digest}", secret)
         with self.assertRaises(ValueError):
             verify_stripe_signature(payload, f"t={timestamp},v1=bad", secret)
+        with self.assertRaises(ValueError):
+            verify_stripe_signature(payload, "t=not-a-number,v1=bad", secret)
 
     def test_checkout_activates_subscription_and_grants_initial_allowance_once(self):
         event = {"id": "evt_checkout_1", "type": "checkout.session.completed", "data": {"object": {"metadata": {"user_id": str(self.user.pk), "plan_code": "creator"}, "customer": "cus_1", "subscription": "sub_1"}}}
@@ -41,7 +43,7 @@ class BillingLifecycleTests(TestCase):
         self.subscription.provider_subscription_id = "sub_2"
         self.subscription.provider = "stripe"
         self.subscription.save()
-        event = {"id": "evt_invoice_1", "type": "invoice.paid", "data": {"object": {"subscription": "sub_2"}}}
+        event = {"id": "evt_invoice_1", "type": "invoice.paid", "data": {"subscription": "sub_2"}}
         self.assertTrue(handle_stripe_event(event))
         self.assertFalse(handle_stripe_event(event))
         account = CreditAccount.objects.get(user=self.user)
@@ -52,7 +54,7 @@ class BillingLifecycleTests(TestCase):
         self.subscription.provider_subscription_id = "sub_3"
         self.subscription.provider = "stripe"
         self.subscription.save()
-        event = {"id": "evt_failed_1", "type": "invoice.payment_failed", "data": {"object": {"subscription": "sub_3"}}}
+        event = {"id": "evt_failed_1", "type": "invoice.payment_failed", "data": {"subscription": "sub_3"}}
         handle_stripe_event(event)
         self.subscription.refresh_from_db()
         self.assertEqual(self.subscription.status, Subscription.Status.PAST_DUE)
@@ -84,6 +86,22 @@ class BillingApiTests(TestCase):
         self.assertEqual(response.data["checkout_url"], "https://checkout.stripe.test/session")
         self.assertEqual(Subscription.objects.get(user=self.user).plan_code, "free")
         checkout.assert_called_once_with(self.user, "pro")
+
+    @patch("video_generator.billing_views.cancel_paid_subscription", return_value=True)
+    @patch("video_generator.billing_views.stripe_configured", return_value=True)
+    def test_paid_to_free_schedules_provider_cancellation_without_local_downgrade(self, configured, cancel):
+        subscription = Subscription.objects.get(user=self.user)
+        subscription.plan_code = Subscription.Plan.PRO
+        subscription.provider = "stripe"
+        subscription.provider_subscription_id = "sub_existing"
+        subscription.status = Subscription.Status.ACTIVE
+        subscription.save()
+        response = self.client.post("/api/video/billing/subscription/change/", {"plan_code": "free"}, format="json")
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.data["cancel_at_period_end"])
+        subscription.refresh_from_db()
+        self.assertEqual(subscription.plan_code, Subscription.Plan.PRO)
+        cancel.assert_called_once_with(self.user)
 
     def test_paid_change_is_safe_without_payment_provider(self):
         response = self.client.post("/api/video/billing/subscription/change/", {"plan_code": "pro"}, format="json")
