@@ -9,7 +9,6 @@ load_dotenv()
 if not os.getenv("FAL_KEY"):
     raise RuntimeError("FAL_KEY is missing from .env")
 
-
 prompt = """
 Create a 5-second vertical 9:16 high-quality 3D animated video.
 
@@ -24,16 +23,7 @@ natural body movement, beautiful morning sunlight and realistic shadows.
 No text, no subtitles, no logos and no watermark.
 """
 
-
 print("Starting generation...")
-
-result = fal_client.subscribe(
-    "fal-ai/ltx-2.3/text-to-video/fast",
-    arguments={
-        "prompt": prompt,
-    },
-    with_logs=True,
-)
-
+result = fal_client.subscribe("fal-ai/ltx-2.3/text-to-video/fast", arguments={"prompt": prompt}, with_logs=True)
 print("\nGeneration completed:")
 print(result)
