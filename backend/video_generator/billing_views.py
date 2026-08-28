@@ -6,7 +6,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from .billing import PLANS, apply_plan_allowance, create_checkout_session, ensure_subscription, handle_stripe_event, stripe_configured, verify_stripe_signature
+from .billing import PLANS, apply_plan_allowance, cancel_paid_subscription, create_checkout_session, ensure_subscription, handle_stripe_event, stripe_configured, verify_stripe_signature
 from .models import CreditAccount, Subscription
 
 
@@ -14,17 +14,8 @@ class PlansView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        plans = []
         configured = stripe_configured()
-        for plan in PLANS.values():
-            plans.append({
-                "code": plan.code,
-                "name": plan.name,
-                "monthly_price_usd": str(plan.monthly_price_usd),
-                "monthly_credits": plan.monthly_credits,
-                "max_duration": plan.max_duration,
-                "available": plan.code == "free" or configured,
-            })
+        plans = [{"code": plan.code, "name": plan.name, "monthly_price_usd": str(plan.monthly_price_usd), "monthly_credits": plan.monthly_credits, "max_duration": plan.max_duration, "available": plan.code == "free" or configured} for plan in PLANS.values()]
         return Response({"plans": plans})
 
 
@@ -35,14 +26,7 @@ class SubscriptionView(APIView):
         subscription = ensure_subscription(request.user)
         if subscription.plan_code == Subscription.Plan.FREE and not CreditAccount.objects.filter(user=request.user).exists():
             apply_plan_allowance(request.user, "free", grant=True, idempotency_key=f"free-grant:{request.user.pk}")
-        return Response({
-            "plan_code": subscription.plan_code,
-            "status": subscription.status,
-            "provider": subscription.provider,
-            "current_period_start": subscription.current_period_start,
-            "current_period_end": subscription.current_period_end,
-            "cancel_at_period_end": subscription.cancel_at_period_end,
-        })
+        return Response({"plan_code": subscription.plan_code, "status": subscription.status, "provider": subscription.provider, "current_period_start": subscription.current_period_start, "current_period_end": subscription.current_period_end, "cancel_at_period_end": subscription.cancel_at_period_end})
 
 
 class SubscriptionChangeView(APIView):
@@ -52,15 +36,19 @@ class SubscriptionChangeView(APIView):
         code = str(request.data.get("plan_code", "")).lower().strip()
         if code not in PLANS:
             return Response({"detail": "Unknown plan."}, status=400)
+        subscription = ensure_subscription(request.user)
         if code == "free":
-            with transaction.atomic():
-                subscription = ensure_subscription(request.user)
-                subscription.plan_code = Subscription.Plan.FREE
-                subscription.status = Subscription.Status.ACTIVE
-                subscription.cancel_at_period_end = False
-                subscription.save(update_fields=["plan_code", "status", "cancel_at_period_end", "updated_at"])
-                apply_plan_allowance(request.user, "free", grant=False)
-            return Response({"plan_code": "free", "status": "active"})
+            if subscription.plan_code == Subscription.Plan.FREE:
+                return Response({"plan_code": "free", "status": subscription.status})
+            if subscription.provider != "stripe" or not subscription.provider_subscription_id:
+                return Response({"detail": "Paid subscription cannot be changed to free until its billing provider is cancelled."}, status=409)
+            if not stripe_configured():
+                return Response({"detail": "Billing is not configured. Configure Stripe before cancelling the paid subscription."}, status=503)
+            try:
+                cancel_paid_subscription(request.user)
+            except Exception:
+                return Response({"detail": "Unable to schedule the paid subscription cancellation."}, status=502)
+            return Response({"plan_code": subscription.plan_code, "status": subscription.status, "cancel_at_period_end": True})
         if not stripe_configured():
             return Response({"detail": "Billing is not configured. Configure Stripe keys and price IDs before accepting paid subscriptions."}, status=503)
         try:
