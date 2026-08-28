@@ -9,8 +9,8 @@ class CharacterSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Character
-        fields = ["id", "name", "role", "age_description", "appearance", "clothing", "personality", "description", "visual_prompt", "reference_image_url", "consistency_prompt"]
-        read_only_fields = ["id", "consistency_prompt"]
+        fields = ["id", "name", "role", "age_description", "appearance", "clothing", "personality", "description", "visual_prompt", "reference_image_url", "reference_generation_attempt", "consistency_prompt"]
+        read_only_fields = ["id", "reference_generation_attempt", "consistency_prompt"]
 
 
 class VideoSceneSerializer(serializers.ModelSerializer):
@@ -28,7 +28,7 @@ class VideoProjectSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = VideoProject
-        fields = ["id", "title", "version_group", "version_number", "input_type", "prompt", "aspect_ratio", "duration", "status", "provider", "provider_project_id", "video_url", "error_message", "generation_attempt", "processing_started_at", "completed_at", "failed_at", "characters", "scenes", "created_at", "updated_at"]
+        fields = ["id", "version_group", "version_number", "title", "input_type", "prompt", "aspect_ratio", "duration", "status", "provider", "provider_project_id", "video_url", "error_message", "generation_attempt", "processing_started_at", "completed_at", "failed_at", "characters", "scenes", "created_at", "updated_at"]
         read_only_fields = ["id", "version_group", "version_number", "status", "provider", "provider_project_id", "video_url", "error_message", "generation_attempt", "processing_started_at", "completed_at", "failed_at", "characters", "scenes", "created_at", "updated_at"]
 
     def validate_duration(self, value):
