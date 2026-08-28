@@ -1,13 +1,14 @@
 from django.db import transaction
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
+from django.db.models import Sum
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from .credits import get_or_create_credit_account, reserve_generation
-from .models import Character, VideoProject, VideoScene
+from .credits import get_or_create_credit_account
+from .models import Character, CreditTransaction, UsageEvent, VideoProject, VideoScene
 from .rate_limit import allow_request, rate_limited_response
 from .scene_planner import build_scene_plan, validate_generation_options
 from .serializers import VideoProjectSerializer
@@ -47,11 +48,6 @@ class VideoProjectCreateView(APIView):
             return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
         with transaction.atomic():
             project = VideoProject.objects.create(user=request.user, title=title, version_number=1, prompt=prompt, input_type=input_type, aspect_ratio=aspect_ratio, duration=duration, status=VideoProject.Status.QUEUED, provider="fal_pixverse_c1")
-            try:
-                reserve_generation(request.user, project, idempotency_key=f"project:{project.id}:generation:1")
-            except Exception as exc:
-                project.delete()
-                return Response(exc.detail if hasattr(exc, "detail") else {"detail": str(exc)}, status=status.HTTP_402_PAYMENT_REQUIRED)
             characters = [Character.objects.create(project=project, name=str(item["name"]).strip(), role=str(item.get("role", "")).strip(), age_description=str(item.get("age_description", "")).strip(), appearance=str(item.get("appearance", "")).strip(), clothing=str(item.get("clothing", "")).strip(), personality=str(item.get("personality", "")).strip(), description=str(item.get("description", "")).strip(), visual_prompt=str(item.get("visual_prompt", "")).strip(), reference_image_url=item.get("reference_image_url") or None) for item in normalized_characters]
             character_block = "\nCharacter continuity: " + "; ".join(character.consistency_prompt for character in characters) + ". Keep recurring characters visually identical across scenes."
             scenes = [VideoScene(project=project, scene_number=scene["scene_number"], duration=scene["duration"], prompt=scene["prompt"] + character_block) for scene in scene_plan]
@@ -66,7 +62,22 @@ class CreditBalanceView(APIView):
 
     def get(self, request):
         account = get_or_create_credit_account(request.user)
-        return Response({"balance": account.balance, "monthly_allowance": account.monthly_allowance})
+        used = CreditTransaction.objects.filter(account=account, kind=CreditTransaction.Kind.RESERVE).aggregate(total=Sum("amount"))["total"] or 0
+        return Response({"balance": account.balance, "monthly_allowance": account.monthly_allowance, "used": used})
+
+
+class UsageSummaryView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        events = UsageEvent.objects.filter(user=request.user)
+        return Response({
+            "projects": events.filter(kind=UsageEvent.Kind.PROJECT).aggregate(total=Sum("quantity"))["total"] or 0,
+            "scenes": events.filter(kind=UsageEvent.Kind.SCENE).aggregate(total=Sum("quantity"))["total"] or 0,
+            "character_references": events.filter(kind=UsageEvent.Kind.CHARACTER_REFERENCE).aggregate(total=Sum("quantity"))["total"] or 0,
+            "assemblies": events.filter(kind=UsageEvent.Kind.ASSEMBLY).aggregate(total=Sum("quantity"))["total"] or 0,
+            "credits_consumed": events.aggregate(total=Sum("credits"))["total"] or 0,
+        })
 
 
 class VideoProjectVersionsView(APIView):
@@ -117,11 +128,6 @@ class VideoProjectVersionsView(APIView):
         with transaction.atomic():
             next_number = VideoProject.objects.select_for_update().filter(version_group=source.version_group).order_by("-version_number").values_list("version_number", flat=True).first() or 0
             version = VideoProject.objects.create(user=request.user, version_group=source.version_group, version_number=next_number + 1, title=title, input_type=input_type, prompt=prompt, aspect_ratio=aspect_ratio, duration=duration, status=VideoProject.Status.QUEUED, provider="fal_pixverse_c1")
-            try:
-                reserve_generation(request.user, version, idempotency_key=f"project:{version.id}:generation:1")
-            except Exception as exc:
-                version.delete()
-                return Response(exc.detail if hasattr(exc, "detail") else {"detail": str(exc)}, status=status.HTTP_402_PAYMENT_REQUIRED)
             characters = [Character.objects.create(project=version, **item) for item in normalized]
             character_block = "\nCharacter continuity: " + "; ".join(c.consistency_prompt for c in characters) + ". Keep recurring characters visually identical across scenes."
             scenes = [VideoScene(project=version, scene_number=item["scene_number"], duration=item["duration"], prompt=item["prompt"] + character_block) for item in scene_plan]
