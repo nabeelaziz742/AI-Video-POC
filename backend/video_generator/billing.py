@@ -81,8 +81,7 @@ def create_checkout_session(user, plan_code: str) -> str:
         data["customer_email"] = user.email
     response = requests.post("https://api.stripe.com/v1/checkout/sessions", headers=headers, data=data, timeout=15)
     response.raise_for_status()
-    payload = response.json()
-    return payload["url"]
+    return response.json()["url"]
 
 
 def verify_stripe_signature(payload: bytes, signature: str, secret: str) -> None:
@@ -92,7 +91,13 @@ def verify_stripe_signature(payload: bytes, signature: str, secret: str) -> None
         key, _, value = part.partition("=")
         if key == "t": timestamp = value
         elif key == "v1": signatures.append(value)
-    if not timestamp or not signatures or abs(time.time() - int(timestamp)) > 300:
+    if not timestamp or not signatures:
+        raise ValueError("Invalid Stripe signature.")
+    try:
+        timestamp_int = int(timestamp)
+    except ValueError as exc:
+        raise ValueError("Invalid Stripe signature timestamp.") from exc
+    if abs(time.time() - timestamp_int) > 300:
         raise ValueError("Invalid or expired Stripe signature.")
     signed = f"{timestamp}.{payload.decode('utf-8')}".encode()
     expected = hmac.new(secret.encode(), signed, hashlib.sha256).hexdigest()
@@ -128,6 +133,7 @@ def handle_stripe_event(event: dict):
                 subscription.provider_customer_id = payload.get("customer") or subscription.provider_customer_id
                 subscription.provider_subscription_id = payload.get("subscription") or subscription.provider_subscription_id
                 subscription.save()
+                apply_plan_allowance(subscription.user, plan_code, grant=True, idempotency_key=f"stripe:checkout:{event_id}")
         elif event_type in {"invoice.paid", "invoice.payment_succeeded"}:
             subscription_id = payload.get("subscription")
             subscription = Subscription.objects.select_for_update().filter(provider_subscription_id=subscription_id).first()
