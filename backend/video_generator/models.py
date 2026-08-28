@@ -98,3 +98,37 @@ class VideoScene(models.Model):
 
     def __str__(self):
         return f"{self.project.title} — Scene {self.scene_number}"
+
+
+class CreditAccount(models.Model):
+    user = models.OneToOneField(settings.AUTH_USER_MODEL, related_name="credit_account", on_delete=models.CASCADE)
+    balance = models.PositiveIntegerField(default=0)
+    monthly_allowance = models.PositiveIntegerField(default=0)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return f"{self.user} — {self.balance} credits"
+
+
+class CreditTransaction(models.Model):
+    class Kind(models.TextChoices):
+        GRANT = "grant", "Grant"
+        RESERVE = "reserve", "Reserve"
+        RELEASE = "release", "Release"
+        CONSUME = "consume", "Consume"
+        REFUND = "refund", "Refund"
+        ADJUSTMENT = "adjustment", "Adjustment"
+
+    account = models.ForeignKey(CreditAccount, related_name="transactions", on_delete=models.CASCADE)
+    kind = models.CharField(max_length=20, choices=Kind.choices)
+    amount = models.PositiveIntegerField()
+    project = models.ForeignKey(VideoProject, related_name="credit_transactions", on_delete=models.SET_NULL, null=True, blank=True)
+    idempotency_key = models.CharField(max_length=120, unique=True)
+    note = models.CharField(max_length=255, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+
+    def __str__(self):
+        return f"{self.kind}: {self.amount}"
