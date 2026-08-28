@@ -1,5 +1,6 @@
 name: CI
 
+# Final production-gate verification for the AI video generation pipeline.
 on:
   workflow_dispatch:
   push:
