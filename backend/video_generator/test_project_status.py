@@ -1,5 +1,6 @@
-from unittest.mock import Mock, patch
+from unittest.mock import patch
 
+from django.contrib.auth.models import User
 from django.test import TestCase
 from rest_framework.test import APIRequestFactory
 
@@ -10,15 +11,18 @@ from .views import VideoProjectStatusView
 class ProjectStatusTests(TestCase):
     def setUp(self):
         self.factory = APIRequestFactory()
-        self.project = VideoProject.objects.create(
-            title="Status Test", prompt="A short story", duration=10, aspect_ratio="9:16",
-            provider="json2video", provider_project_id="assembly-123",
-        )
+        self.user = User.objects.create_user(username="status-user", password="StrongPass123")
+        self.project = VideoProject.objects.create(user=self.user, title="Status Test", prompt="A short story", duration=10, aspect_ratio="9:16", provider="json2video", provider_project_id="assembly-123")
+
+    def request(self):
+        request = self.factory.get("/status/")
+        self.factory.force_authenticate(request, user=self.user)
+        return request
 
     @patch("video_generator.views.JSON2VideoService.get_movie")
     def test_done_movie_marks_project_completed(self, get_movie):
         get_movie.return_value = {"movie": {"status": "done", "url": "https://example.com/final.mp4"}}
-        response = VideoProjectStatusView.as_view()(self.factory.get("/status/"), project_id=self.project.id)
+        response = VideoProjectStatusView.as_view()(self.request(), project_id=self.project.id)
         self.assertEqual(response.status_code, 200)
         self.project.refresh_from_db()
         self.assertEqual(self.project.status, VideoProject.Status.COMPLETED)
@@ -27,7 +31,7 @@ class ProjectStatusTests(TestCase):
     @patch("video_generator.views.JSON2VideoService.get_movie")
     def test_provider_error_marks_project_failed(self, get_movie):
         get_movie.return_value = {"movie": {"status": "error", "message": "render failed"}}
-        VideoProjectStatusView.as_view()(self.factory.get("/status/"), project_id=self.project.id)
+        VideoProjectStatusView.as_view()(self.request(), project_id=self.project.id)
         self.project.refresh_from_db()
         self.assertEqual(self.project.status, VideoProject.Status.FAILED)
         self.assertEqual(self.project.error_message, "render failed")
@@ -35,6 +39,6 @@ class ProjectStatusTests(TestCase):
     @patch("video_generator.views.JSON2VideoService.get_movie")
     def test_running_movie_keeps_project_processing(self, get_movie):
         get_movie.return_value = {"movie": {"status": "running"}}
-        VideoProjectStatusView.as_view()(self.factory.get("/status/"), project_id=self.project.id)
+        VideoProjectStatusView.as_view()(self.request(), project_id=self.project.id)
         self.project.refresh_from_db()
         self.assertEqual(self.project.status, VideoProject.Status.PROCESSING)

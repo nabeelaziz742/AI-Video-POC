@@ -1,5 +1,6 @@
 from unittest.mock import patch
 
+from django.contrib.auth.models import User
 from django.test import TestCase
 from rest_framework.test import APIRequestFactory
 
@@ -15,41 +16,35 @@ class FakeProvider:
 class SceneGenerationSafetyTests(TestCase):
     def setUp(self):
         self.factory = APIRequestFactory()
-        self.project = VideoProject.objects.create(
-            title="Test Project", prompt="A farmer story", duration=10, aspect_ratio="9:16"
-        )
-        self.character = Character.objects.create(
-            project=self.project,
-            name="Farmer",
-            appearance="friendly farmer",
-            reference_image_url="https://example.com/farmer.png",
-        )
-        self.scene = VideoScene.objects.create(
-            project=self.project, scene_number=1, duration=5, prompt="The farmer walks."
-        )
+        self.user = User.objects.create_user(username="creator", password="StrongPass123")
+        self.project = VideoProject.objects.create(user=self.user, title="Test Project", prompt="A farmer story", duration=10, aspect_ratio="9:16")
+        self.character = Character.objects.create(project=self.project, name="Farmer", appearance="friendly farmer", reference_image_url="https://example.com/farmer.png")
+        self.scene = VideoScene.objects.create(project=self.project, scene_number=1, duration=5, prompt="The farmer walks.")
         self.scene.characters.add(self.character)
+
+    def request(self, path):
+        request = self.factory.post(path, {}, format="json")
+        self.factory.force_authenticate(request, user=self.user)
+        return request
 
     def test_duplicate_processing_generation_is_not_submitted(self):
         self.scene.status = VideoScene.Status.PROCESSING
         self.scene.provider_project_id = "existing-job"
         self.scene.save(update_fields=["status", "provider_project_id"])
-        request = self.factory.post("/generate/", {}, format="json")
-        response = SceneGenerateView.as_view()(request, project_id=self.project.id, scene_id=self.scene.id)
+        response = SceneGenerateView.as_view()(self.request("/generate/"), project_id=self.project.id, scene_id=self.scene.id)
         self.assertEqual(response.status_code, 202)
         self.assertEqual(response.data["provider_project_id"], "existing-job")
 
     def test_generation_requires_reference_images(self):
         self.character.reference_image_url = None
         self.character.save(update_fields=["reference_image_url"])
-        request = self.factory.post("/generate/", {}, format="json")
-        response = SceneGenerateView.as_view()(request, project_id=self.project.id, scene_id=self.scene.id)
+        response = SceneGenerateView.as_view()(self.request("/generate/"), project_id=self.project.id, scene_id=self.scene.id)
         self.assertEqual(response.status_code, 400)
         self.assertIn("reference", response.data["detail"].lower())
 
     @patch("video_generator.ai_views.get_video_provider", return_value=FakeProvider())
     def test_generation_uses_provider_without_calling_real_api(self, mock_provider):
-        request = self.factory.post("/generate/", {}, format="json")
-        response = SceneGenerateView.as_view()(request, project_id=self.project.id, scene_id=self.scene.id)
+        response = SceneGenerateView.as_view()(self.request("/generate/"), project_id=self.project.id, scene_id=self.scene.id)
         self.assertEqual(response.status_code, 202)
         self.scene.refresh_from_db()
         self.assertEqual(self.scene.status, VideoScene.Status.PROCESSING)
@@ -63,9 +58,7 @@ class SceneGenerationSafetyTests(TestCase):
         self.scene.video_url = "https://example.com/old.mp4"
         self.scene.error_message = "old error"
         self.scene.save()
-
-        request = self.factory.post("/regenerate/", {}, format="json")
-        response = SceneRegenerateView.as_view()(request, project_id=self.project.id, scene_id=self.scene.id)
+        response = SceneRegenerateView.as_view()(self.request("/regenerate/"), project_id=self.project.id, scene_id=self.scene.id)
         self.assertEqual(response.status_code, 202)
         self.scene.refresh_from_db()
         self.assertEqual(self.scene.provider_project_id, "fake-job")
