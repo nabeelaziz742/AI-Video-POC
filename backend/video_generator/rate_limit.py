@@ -4,8 +4,12 @@ from rest_framework import status
 
 
 def allow_request(request, key_prefix: str, limit: int = 20, window: int = 60) -> bool:
-    """Small cache-backed guard for expensive endpoints. Returns False after limit/window."""
-    ident = request.META.get("REMOTE_ADDR", "unknown")
+    """Cache-backed guard for expensive endpoints, isolated by authenticated user when available."""
+    user = getattr(request, "user", None)
+    if user is not None and getattr(user, "is_authenticated", False):
+        ident = f"user:{user.pk}"
+    else:
+        ident = f"ip:{request.META.get('REMOTE_ADDR', 'unknown')}"
     key = f"video:{key_prefix}:{ident}"
     try:
         count = cache.get(key, 0)
