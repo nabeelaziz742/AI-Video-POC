@@ -6,6 +6,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from .billing import ensure_subscription, get_plan
 from .character_generation import CharacterGenerationError, generate_character_reference
 from .credits import generation_cost, record_usage, reserve_credits, refund_transaction
 from .models import Character, VideoProject, VideoScene, UsageEvent
@@ -17,6 +18,16 @@ from .services import JSON2VideoService
 
 CHARACTER_REFERENCE_COST = 5
 ASSEMBLY_COST = 5
+
+
+def _plan_generation_error(user, duration):
+    subscription = ensure_subscription(user)
+    if subscription.status not in {subscription.Status.ACTIVE, subscription.Status.TRIALING}:
+        return "Your subscription is not active. Please update your plan before generating a video."
+    plan = get_plan(subscription.plan_code)
+    if duration > plan.max_duration:
+        return f"Your {plan.name} plan supports videos up to {plan.max_duration} seconds."
+    return None
 
 
 class OwnedProjectMixin:
@@ -56,6 +67,9 @@ class SceneGenerateView(OwnedProjectMixin, APIView):
         if not allow_request(request, "scene-generate", limit=12, window=60):
             return rate_limited_response()
         project = self.get_project(request, project_id)
+        plan_error = _plan_generation_error(request.user, project.duration)
+        if plan_error:
+            return Response({"detail": plan_error}, status=status.HTTP_402_PAYMENT_REQUIRED)
         scene = get_object_or_404(VideoScene, id=scene_id, project=project)
         if scene.status == VideoScene.Status.PROCESSING and scene.provider_project_id:
             return Response(VideoSceneSerializer(scene).data, status=status.HTTP_202_ACCEPTED)
