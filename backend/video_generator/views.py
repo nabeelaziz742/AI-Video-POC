@@ -7,7 +7,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from .credits import get_or_create_credit_account
+from .credits import get_or_create_credit_account, refund_transaction
 from .models import Character, CreditTransaction, UsageEvent, VideoProject, VideoScene
 from .rate_limit import allow_request, rate_limited_response
 from .scene_planner import build_scene_plan, validate_generation_options
@@ -152,27 +152,28 @@ class VideoProjectStatusView(APIView):
                 if provider_status == "done":
                     video_url = movie.get("url")
                     if not video_url:
-                        project.status = VideoProject.Status.FAILED
-                        project.error_message = "JSON2Video marked the movie done but returned no video URL."
-                        project.failed_at = timezone.now()
+                        self._fail_and_refund(project, "JSON2Video marked the movie done but returned no video URL.")
                     else:
                         project.status = VideoProject.Status.COMPLETED
                         project.video_url = video_url
                         project.error_message = None
                         project.completed_at = timezone.now()
                         project.failed_at = None
-                    project.save(update_fields=["status", "video_url", "error_message", "completed_at", "failed_at", "updated_at"])
+                        project.save(update_fields=["status", "video_url", "error_message", "completed_at", "failed_at", "updated_at"])
                 elif provider_status in {"error", "timeout"}:
-                    project.status = VideoProject.Status.FAILED
-                    project.error_message = "Video rendering failed at the assembly provider."
-                    project.failed_at = timezone.now()
-                    project.save(update_fields=["status", "error_message", "failed_at", "updated_at"])
+                    self._fail_and_refund(project, "Video rendering failed at the assembly provider.")
                 else:
                     project.status = VideoProject.Status.PROCESSING
                     project.save(update_fields=["status", "updated_at"])
             except Exception:
-                project.status = VideoProject.Status.FAILED
-                project.error_message = "Unable to read the video assembly provider status."
-                project.failed_at = timezone.now()
-                project.save(update_fields=["status", "error_message", "failed_at", "updated_at"])
+                self._fail_and_refund(project, "Unable to read the video assembly provider status.")
         return Response(VideoProjectSerializer(project).data)
+
+    @staticmethod
+    def _fail_and_refund(project, message):
+        project.status = VideoProject.Status.FAILED
+        project.error_message = message
+        project.failed_at = timezone.now()
+        project.save(update_fields=["status", "error_message", "failed_at", "updated_at"])
+        reservation_key = f"assembly:{project.id}:{project.generation_attempt}"
+        refund_transaction(reservation_key=reservation_key, idempotency_key=f"refund:{reservation_key}")
