@@ -34,7 +34,10 @@ class CharacterReferenceView(OwnedProjectMixin, APIView):
         character = get_object_or_404(Character, id=character_id, project=project)
         if character.reference_image_url and not request.data.get("force"):
             return Response({"character": character.id, "reference_image_url": character.reference_image_url, "reused": True})
+
         attempt = character.reference_generation_attempt + 1
+        character.reference_generation_attempt = attempt
+        character.save(update_fields=["reference_generation_attempt"])
         charge_key = f"character-reference:{character.id}:{attempt}"
         try:
             reserve_credits(request.user, CHARACTER_REFERENCE_COST, idempotency_key=charge_key, project=project, note="Character reference generation")
@@ -45,8 +48,6 @@ class CharacterReferenceView(OwnedProjectMixin, APIView):
         except CharacterGenerationError as exc:
             refund_transaction(reservation_key=charge_key, idempotency_key=f"refund:{charge_key}")
             return Response({"detail": str(exc)}, status=status.HTTP_502_BAD_GATEWAY)
-        character.reference_generation_attempt = attempt
-        character.save(update_fields=["reference_generation_attempt"])
         record_usage(request.user, kind=UsageEvent.Kind.CHARACTER_REFERENCE, credits=CHARACTER_REFERENCE_COST, idempotency_key=f"usage:{charge_key}", project=project, character=character)
         return Response({"character": character.id, "reference_image_url": url, "reused": False})
 
@@ -65,6 +66,8 @@ class SceneGenerateView(OwnedProjectMixin, APIView):
             return Response({"detail": "Generate character reference images before generating this scene."}, status=status.HTTP_400_BAD_REQUEST)
         cost = generation_cost(scene.duration)
         attempt = scene.generation_attempt + 1
+        scene.generation_attempt = attempt
+        scene.save(update_fields=["generation_attempt"])
         charge_key = f"scene-generation:{scene.id}:{attempt}"
         try:
             reserve_credits(request.user, cost, idempotency_key=charge_key, project=project, note="Scene generation")
@@ -95,11 +98,10 @@ class SceneGenerateView(OwnedProjectMixin, APIView):
         scene.provider_project_id = request_id
         scene.video_url = None
         scene.error_message = None
-        scene.generation_attempt = attempt
         scene.processing_started_at = timezone.now()
         scene.completed_at = None
         scene.failed_at = None
-        scene.save(update_fields=["status", "provider", "provider_project_id", "video_url", "error_message", "generation_attempt", "processing_started_at", "completed_at", "failed_at"])
+        scene.save(update_fields=["status", "provider", "provider_project_id", "video_url", "error_message", "processing_started_at", "completed_at", "failed_at"])
         record_usage(request.user, kind=UsageEvent.Kind.SCENE, credits=cost, idempotency_key=f"usage:{charge_key}", project=project, scene=scene)
         return Response(VideoSceneSerializer(scene).data, status=status.HTTP_202_ACCEPTED)
 
@@ -114,40 +116,40 @@ class SceneStatusView(OwnedProjectMixin, APIView):
             provider = get_video_provider(scene.provider)
             result = provider.get_scene_result(scene.provider_project_id)
         except VideoProviderError as exc:
-            scene.status = VideoScene.Status.FAILED
-            scene.error_message = str(exc)
-            scene.failed_at = timezone.now()
-            scene.save(update_fields=["status", "error_message", "failed_at"])
+            self._fail_and_refund(scene, str(exc))
             return Response({"detail": str(exc)}, status=status.HTTP_502_BAD_GATEWAY)
         except Exception:
-            scene.status = VideoScene.Status.FAILED
-            scene.error_message = "Unable to read the AI scene generation status."
-            scene.failed_at = timezone.now()
-            scene.save(update_fields=["status", "error_message", "failed_at"])
+            self._fail_and_refund(scene, "Unable to read the AI scene generation status.")
             return Response({"detail": scene.error_message}, status=status.HTTP_502_BAD_GATEWAY)
+
         provider_status = result.get("status")
         if provider_status == "completed":
             video_url = result.get("video_url")
             if not video_url:
-                scene.status = VideoScene.Status.FAILED
-                scene.error_message = "Provider marked the scene completed but returned no video URL."
-                scene.failed_at = timezone.now()
+                self._fail_and_refund(scene, "Provider marked the scene completed but returned no video URL.")
             else:
                 scene.status = VideoScene.Status.COMPLETED
                 scene.video_url = video_url
                 scene.error_message = None
                 scene.completed_at = timezone.now()
                 scene.failed_at = None
-            scene.save(update_fields=["status", "video_url", "error_message", "completed_at", "failed_at"])
+                scene.save(update_fields=["status", "video_url", "error_message", "completed_at", "failed_at"])
         elif provider_status in {"queued", "processing"}:
             scene.status = VideoScene.Status.PROCESSING
             scene.save(update_fields=["status"])
         elif provider_status in {"failed", "error", "cancelled"}:
-            scene.status = VideoScene.Status.FAILED
-            scene.error_message = result.get("error") or "AI video generation failed."
-            scene.failed_at = timezone.now()
-            scene.save(update_fields=["status", "error_message", "failed_at"])
+            self._fail_and_refund(scene, result.get("error") or "AI video generation failed.")
         return Response(VideoSceneSerializer(scene).data)
+
+    @staticmethod
+    def _fail_and_refund(scene, message):
+        scene.status = VideoScene.Status.FAILED
+        scene.error_message = message
+        scene.failed_at = timezone.now()
+        scene.save(update_fields=["status", "error_message", "failed_at"])
+        reservation = scene.project.credit_transactions.filter(kind="reserve").order_by("-created_at").first()
+        if reservation:
+            refund_transaction(reservation_key=reservation.idempotency_key, idempotency_key=f"refund:{reservation.idempotency_key}")
 
 
 class SceneRegenerateView(SceneGenerateView):
