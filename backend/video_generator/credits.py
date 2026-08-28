@@ -7,7 +7,11 @@ FREE_MONTHLY_CREDITS = 100
 
 
 def generation_cost(duration: int) -> int:
-    return {10: 10, 30: 30, 60: 60}.get(int(duration), 0)
+    """Charge one credit per generated video second; project totals remain 10/30/60 credits."""
+    duration = int(duration)
+    if duration < 1 or duration > 15:
+        return 0
+    return duration
 
 
 def get_or_create_credit_account(user):
