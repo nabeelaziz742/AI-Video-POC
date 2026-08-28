@@ -14,13 +14,7 @@ class VideoProject(models.Model):
         COMPLETED = "completed", "Completed"
         FAILED = "failed", "Failed"
 
-    user = models.ForeignKey(
-        settings.AUTH_USER_MODEL,
-        related_name="video_projects",
-        on_delete=models.CASCADE,
-        null=True,
-        blank=True,
-    )
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, related_name="video_projects", on_delete=models.CASCADE, null=True, blank=True)
     title = models.CharField(max_length=255)
     input_type = models.CharField(max_length=20, choices=InputType.choices, default=InputType.STORY)
     prompt = models.TextField()
@@ -31,6 +25,10 @@ class VideoProject(models.Model):
     provider_project_id = models.CharField(max_length=100, blank=True, null=True)
     video_url = models.URLField(blank=True, null=True)
     error_message = models.TextField(blank=True, null=True)
+    generation_attempt = models.PositiveIntegerField(default=0)
+    processing_started_at = models.DateTimeField(blank=True, null=True)
+    completed_at = models.DateTimeField(blank=True, null=True)
+    failed_at = models.DateTimeField(blank=True, null=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -83,6 +81,10 @@ class VideoScene(models.Model):
     provider_project_id = models.CharField(max_length=120, blank=True, null=True)
     video_url = models.URLField(blank=True, null=True)
     error_message = models.TextField(blank=True, null=True)
+    generation_attempt = models.PositiveIntegerField(default=0)
+    processing_started_at = models.DateTimeField(blank=True, null=True)
+    completed_at = models.DateTimeField(blank=True, null=True)
+    failed_at = models.DateTimeField(blank=True, null=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
