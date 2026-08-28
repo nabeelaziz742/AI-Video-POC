@@ -1,3 +1,5 @@
+import uuid
+
 from django.conf import settings
 from django.db import models
 
@@ -15,6 +17,8 @@ class VideoProject(models.Model):
         FAILED = "failed", "Failed"
 
     user = models.ForeignKey(settings.AUTH_USER_MODEL, related_name="video_projects", on_delete=models.CASCADE, null=True, blank=True)
+    version_group = models.UUIDField(default=uuid.uuid4, editable=False, db_index=True)
+    version_number = models.PositiveIntegerField(default=1)
     title = models.CharField(max_length=255)
     input_type = models.CharField(max_length=20, choices=InputType.choices, default=InputType.STORY)
     prompt = models.TextField()
@@ -34,9 +38,10 @@ class VideoProject(models.Model):
 
     class Meta:
         ordering = ["-created_at"]
+        constraints = [models.UniqueConstraint(fields=["version_group", "version_number"], name="unique_project_version")]
 
     def __str__(self):
-        return self.title
+        return f"{self.title} — V{self.version_number}"
 
 
 class Character(models.Model):
