@@ -20,7 +20,7 @@ class SceneGenerationSafetyTests(TestCase):
         get_or_create_credit_account(self.user)
         self.project = VideoProject.objects.create(user=self.user, title="Test Project", prompt="A farmer story", duration=10, aspect_ratio="9:16")
         self.character = Character.objects.create(project=self.project, name="Farmer", appearance="friendly farmer", reference_image_url="https://example.com/farmer.png")
-        self.scene = VideoScene.objects.create(project=self.project, scene_number=1, duration=5, prompt="The farmer walks.")
+        self.scene = VideoScene.objects.create(project=self.project, scene_number=1, duration=10, prompt="The farmer walks.")
         self.scene.characters.add(self.character)
 
     def request(self, path):
