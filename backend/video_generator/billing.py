@@ -23,7 +23,7 @@ class Plan:
 
 
 PLANS = {
-    "free": Plan("free", "Free", Decimal("0"), 100, 10),
+    "free": Plan("free", "Free", Decimal("0"), 10, 10),
     "creator": Plan("creator", "Creator", Decimal("9.99"), 500, 30),
     "pro": Plan("pro", "Pro", Decimal("24.99"), 1500, 60),
 }

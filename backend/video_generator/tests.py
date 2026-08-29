@@ -3,7 +3,7 @@ from django.core.cache import cache
 from django.test import TestCase
 from rest_framework.test import APIRequestFactory
 
-from .models import Character, VideoProject, VideoScene
+from .models import Character, Subscription, VideoProject, VideoScene
 from .providers import FalPixVerseC1Provider, VideoProviderError
 from .rate_limit import allow_request
 from .scene_planner import build_scene_plan, get_dimensions, validate_generation_options
@@ -35,7 +35,9 @@ class CharacterSceneModelTests(TestCase):
 
 
 class ProjectPlanningAPITests(TestCase):
-    def setUp(self): self.user = User.objects.create_user(username="planner", password="StrongPass123")
+    def setUp(self):
+        self.user = User.objects.create_user(username="planner", password="StrongPass123")
+        Subscription.objects.create(user=self.user, plan_code=Subscription.Plan.CREATOR)
     def request(self, payload):
         request = APIRequestFactory().post("/projects/", payload, format="json"); request.user = self.user; return request
     def test_project_creation_only_plans_scenes(self):

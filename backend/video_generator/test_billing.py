@@ -96,7 +96,7 @@ class BillingApiTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.data["plan_code"], "free")
         self.assertEqual(response.data["status"], "active")
-        self.assertEqual(CreditAccount.objects.get(user=self.user).balance, 100)
+        self.assertEqual(CreditAccount.objects.get(user=self.user).balance, 10)
 
     @patch("video_generator.billing_views.create_checkout_session", return_value="https://checkout.stripe.test/session")
     @patch("video_generator.billing_views.stripe_configured", return_value=True)

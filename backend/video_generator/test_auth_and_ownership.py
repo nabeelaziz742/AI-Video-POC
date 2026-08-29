@@ -21,6 +21,9 @@ class AuthAndOwnershipTests(APITestCase):
     def test_signup_creates_authenticated_session(self):
         response = self.client.post("/api/video/auth/signup/", {"username": "charlie", "email": "charlie@example.com", "password": "StrongPass789"}, format="json")
         self.assertEqual(response.status_code, 201)
+        token = response.data["verification_token"]
+        verify = self.client.post("/api/video/auth/verify-email/", {"token": token}, format="json")
+        self.assertEqual(verify.status_code, 200)
         me = self.client.get("/api/video/auth/me/")
         self.assertEqual(me.status_code, 200)
         self.assertEqual(me.data["user"]["username"], "charlie")

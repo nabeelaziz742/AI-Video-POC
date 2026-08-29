@@ -13,7 +13,15 @@ from .ai_views import (
     SceneRegenerateView,
     SceneStatusView,
 )
-from .auth_views import CSRFTokenView, LoginView, LogoutView, MeView, SignupView
+from .auth_views import (
+    CSRFTokenView,
+    LoginView,
+    LogoutView,
+    MeView,
+    ResendVerificationView,
+    SignupView,
+    VerifyEmailView,
+)
 from .billing_views import (
     BillingWebhookView,
     PlansView,
@@ -38,6 +46,8 @@ urlpatterns = [
     # Auth
     path("auth/csrf/", CSRFTokenView.as_view()),
     path("auth/signup/", SignupView.as_view()),
+    path("auth/verify-email/", VerifyEmailView.as_view()),
+    path("auth/resend-verification/", ResendVerificationView.as_view()),
     path("auth/login/", LoginView.as_view()),
     path("auth/logout/", LogoutView.as_view()),
     path("auth/me/", MeView.as_view()),

@@ -6,6 +6,7 @@ from django.test import TestCase
 from rest_framework.test import APIRequestFactory
 
 from .ai_views import ProjectAssembleView, SceneGenerateView, SceneStatusView
+from .credits import grant_free_allowance
 from .models import Character, VideoProject, VideoScene
 from .views import VideoProjectStatusView
 
@@ -13,6 +14,7 @@ from .views import VideoProjectStatusView
 class EndToEndPipelineTests(TestCase):
     def setUp(self):
         self.factory = APIRequestFactory(); self.user = User.objects.create_user(username="pipeline-user", password="StrongPass123")
+        grant_free_allowance(self.user)
         self.project = VideoProject.objects.create(user=self.user, title="Pipeline Test", prompt="A character walks home", duration=10, aspect_ratio="9:16")
         self.character = Character.objects.create(project=self.project, name="Hero", appearance="friendly adult", reference_image_url="https://example.com/hero.png")
         self.scene = VideoScene.objects.create(project=self.project, scene_number=1, duration=10, prompt="Hero walks home", status=VideoScene.Status.PLANNED); self.scene.characters.add(self.character)

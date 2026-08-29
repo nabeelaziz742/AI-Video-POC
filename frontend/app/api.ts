@@ -9,6 +9,10 @@ export interface User {
   first_name: string;
   is_staff?: boolean;
   is_superuser?: boolean;
+  is_active?: boolean;
+  plan_code?: string;
+  credits_balance?: number;
+  email_verified?: boolean;
 }
 
 export interface Character {
@@ -134,7 +138,16 @@ export interface AdminSystemHealth {
   environment: { debug: boolean; allowed_hosts: string[]; cors_origins: string[] };
 }
 
-export const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:9000/api/video";
+const rawApiUrl =
+  process.env.NEXT_PUBLIC_API_BASE_URL ||
+  process.env.NEXT_PUBLIC_API_URL ||
+  "http://127.0.0.1:8000/api/video";
+
+const cleanApiUrl = rawApiUrl.replace(/\/+$/, "");
+
+export const API_BASE_URL = cleanApiUrl.endsWith("/api/video")
+  ? cleanApiUrl
+  : `${cleanApiUrl}/api/video`;
 
 function getCookie(name: string): string | null {
   if (typeof document === "undefined") return null;

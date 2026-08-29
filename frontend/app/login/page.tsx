@@ -49,11 +49,21 @@ export default function LoginPage() {
         {/* Card */}
         <div className="rounded-3xl border border-white/10 bg-[#0d0e14]/80 p-8 shadow-2xl backdrop-blur-xl">
           {error && (
-            <div role="alert" className="mb-6 flex items-start gap-3 rounded-2xl border border-red-500/20 bg-red-500/10 p-4 text-sm text-red-300">
-              <svg className="h-5 w-5 shrink-0 text-red-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-              </svg>
-              <span>{error}</span>
+            <div role="alert" className="mb-6 flex flex-col gap-2 rounded-2xl border border-red-500/20 bg-red-500/10 p-4 text-xs text-red-300">
+              <div className="flex items-start gap-2.5">
+                <svg className="h-5 w-5 shrink-0 text-red-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                </svg>
+                <span>{error}</span>
+              </div>
+              {error.toLowerCase().includes("verify your email") && (
+                <Link
+                  href="/verify-email"
+                  className="mt-1 inline-flex items-center gap-1 font-semibold text-violet-300 hover:text-violet-200 underline"
+                >
+                  Go to Email Verification Page →
+                </Link>
+              )}
             </div>
           )}
 

@@ -24,6 +24,8 @@ ASSEMBLY_COST = 5
 
 
 def _plan_generation_error(user, duration):
+    if not user.is_active:
+        return "Please verify your email address before generating videos."
     subscription = ensure_subscription(user)
     if subscription.status not in {subscription.Status.ACTIVE, subscription.Status.TRIALING}:
         return "Your subscription is not active. Please update your plan before generating a video."

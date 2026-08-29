@@ -4,12 +4,14 @@ from django.contrib.auth.models import User
 from django.test import TestCase
 from rest_framework.test import APIRequestFactory
 
+from django.core.cache import cache
 from .models import VideoProject
 from .views import VideoProjectCreateView
 
 
 class ProjectCreationTests(TestCase):
     def setUp(self):
+        cache.clear()
         self.factory = APIRequestFactory()
         self.user = User.objects.create_user(username="creator", password="StrongPass123")
 

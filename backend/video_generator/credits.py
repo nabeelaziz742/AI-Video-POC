@@ -3,7 +3,7 @@ from rest_framework.exceptions import ValidationError
 
 from .models import CreditAccount, CreditTransaction, UsageEvent, VideoProject
 
-FREE_MONTHLY_CREDITS = 100
+FREE_MONTHLY_CREDITS = 10
 
 
 def generation_cost(duration: int) -> int:
@@ -16,10 +16,31 @@ def generation_cost(duration: int) -> int:
 
 def get_or_create_credit_account(user):
     with transaction.atomic():
-        account, created = CreditAccount.objects.select_for_update().get_or_create(user=user, defaults={"balance": FREE_MONTHLY_CREDITS, "monthly_allowance": FREE_MONTHLY_CREDITS})
-        if created:
-            CreditTransaction.objects.create(account=account, kind=CreditTransaction.Kind.GRANT, amount=FREE_MONTHLY_CREDITS, idempotency_key=f"signup-grant:{user.pk}", note="Initial free allowance")
+        account, _ = CreditAccount.objects.select_for_update().get_or_create(
+            user=user,
+            defaults={"balance": 0, "monthly_allowance": FREE_MONTHLY_CREDITS}
+        )
         return account
+
+
+def grant_free_allowance(user) -> int:
+    with transaction.atomic():
+        account = get_or_create_credit_account(user)
+        account = CreditAccount.objects.select_for_update().get(pk=account.pk)
+        idempotency_key = f"signup-grant:{user.pk}"
+        if CreditTransaction.objects.filter(idempotency_key=idempotency_key).exists():
+            return account.balance
+        account.balance += FREE_MONTHLY_CREDITS
+        account.monthly_allowance = FREE_MONTHLY_CREDITS
+        account.save(update_fields=["balance", "monthly_allowance", "updated_at"])
+        CreditTransaction.objects.create(
+            account=account,
+            kind=CreditTransaction.Kind.GRANT,
+            amount=FREE_MONTHLY_CREDITS,
+            idempotency_key=idempotency_key,
+            note="Free plan verification grant"
+        )
+        return account.balance
 
 
 def reserve_credits(user, amount: int, *, idempotency_key: str, project=None, note="Generation reserved") -> int:

@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useEffect, useState } from "react";
+import { FormEvent, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { api, InputType, User, VideoProject, VideoScene } from "./api";
@@ -8,22 +8,24 @@ import { CharacterDraft, emptyCharacter } from "./character-types";
 import { CharacterEditor } from "./components/CharacterEditor";
 import { FinalVideo } from "./components/FinalVideo";
 import { ProgressPanel } from "./components/ProgressPanel";
-import { VersionHistory } from "./components/VersionHistory";
+import { VersionHistoryDrawer } from "./components/VersionHistoryDrawer";
 import { Toast } from "./components/Toast";
 
 const initialCharacter: CharacterDraft = {
-  name: "Farmer",
+  name: "Protagonist",
   role: "main character",
-  age_description: "adult man in his 40s",
-  appearance: "friendly face, medium build, black hair and neat moustache",
-  clothing: "traditional brown shalwar kameez with green embroidered vest and sandals",
-  personality: "kind, hardworking, and cheerful",
-  description: "A warm-hearted village farmer who cares deeply for his animals and crops",
+  age_description: "young adult in their 20s",
+  appearance: "distinctive friendly face, expressive eyes, well-proportioned features",
+  clothing: "modern stylish apparel suited for their adventure",
+  personality: "curious, determined, and expressive",
+  description: "The central character in the story",
   visual_prompt: "polished 3D animated character, Pixar and DreamWorks inspired, soft cinematic lighting",
 };
 
 export default function Home() {
   const router = useRouter();
+  const promptInputRef = useRef<HTMLTextAreaElement>(null);
+
   const [authLoading, setAuthLoading] = useState(true);
   const [user, setUser] = useState<User | null>(null);
 
@@ -34,7 +36,8 @@ export default function Home() {
   const [duration, setDuration] = useState(10);
   const [aspectRatio, setAspectRatio] = useState("9:16");
   const [characters, setCharacters] = useState<CharacterDraft[]>([initialCharacter]);
-  const [showCharacters, setShowCharacters] = useState(false);
+  const [showAdvancedControl, setShowAdvancedControl] = useState(false);
+  const [versionsDrawerOpen, setVersionsDrawerOpen] = useState(false);
 
   // Project & Pipeline State
   const [project, setProject] = useState<VideoProject | null>(null);
@@ -44,6 +47,11 @@ export default function Home() {
   const [error, setError] = useState("");
   const [toastMessage, setToastMessage] = useState("");
   const [toastType, setToastType] = useState<"success" | "error" | "info">("info");
+
+  const planCode = user?.plan_code || "free";
+  const isPaidUser = planCode === "creator" || planCode === "pro";
+  const maxAllowedDuration = planCode === "pro" ? 60 : planCode === "creator" ? 30 : 10;
+  const creditsBalance = user?.credits_balance ?? 0;
 
   useEffect(() => {
     api<{ user: User }>("/auth/me/")
@@ -116,8 +124,14 @@ export default function Home() {
       setError("Please enter a story or script before generating.");
       return;
     }
-    if (!characters.length || characters.some((c) => !c.name.trim())) {
-      setError("Please ensure every character has a valid name.");
+
+    if (duration > maxAllowedDuration) {
+      setError(`Your ${planCode.toUpperCase()} plan supports videos up to ${maxAllowedDuration} seconds. Upgrade to unlock longer videos.`);
+      return;
+    }
+
+    if (user && creditsBalance < duration) {
+      setError("Your free generation has been used. Upgrade to create more videos.");
       return;
     }
 
@@ -126,6 +140,18 @@ export default function Home() {
 
     try {
       let activeProject: VideoProject;
+      const payload: Record<string, unknown> = {
+        title: title.trim() || "Untitled Video",
+        input_type: inputType,
+        prompt: prompt.trim(),
+        aspect_ratio: aspectRatio,
+        duration,
+      };
+
+      // Only pass custom characters if paid user opted into Advanced Character Control
+      if (isPaidUser && showAdvancedControl && characters.length > 0) {
+        payload.characters = characters;
+      }
 
       // If a completed/failed project already exists, branch a clean new version
       if (project && (project.status === "completed" || project.status === "failed")) {
@@ -139,32 +165,29 @@ export default function Home() {
             prompt: prompt.trim(),
             aspect_ratio: aspectRatio,
             duration,
+            ...(isPaidUser && showAdvancedControl ? { characters } : {}),
           }),
         });
       } else {
-        setProgress("Initializing project…");
+        setProgress("Understanding story & planning scenes…");
         activeProject = await api<VideoProject>("/projects/", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            title: title.trim() || "Untitled Video",
-            input_type: inputType,
-            prompt: prompt.trim(),
-            aspect_ratio: aspectRatio,
-            duration,
-            characters,
-          }),
+          body: JSON.stringify(payload),
         });
       }
 
       setProject(activeProject);
       await runGeneration(activeProject);
+      setProgress("Video Ready");
       setToastType("success");
       setToastMessage(
         activeProject.version_number > 1
           ? `Version ${activeProject.version_number} generated successfully!`
           : "Video generation completed successfully!"
       );
+      // Refresh user balance
+      api<{ user: User }>("/auth/me/").then((d) => setUser(d.user)).catch(() => null);
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Video generation encountered an error.";
       setError(msg);
@@ -194,37 +217,34 @@ export default function Home() {
     }
   }
 
-  async function selectVersion(next: VideoProject) {
+  function selectVersion(next: VideoProject) {
     setProject(next);
     setInputType(next.input_type);
     setPrompt(next.prompt);
     setTitle(next.title);
     setDuration(next.duration);
     setAspectRatio(next.aspect_ratio);
-    setCharacters(
-      next.characters.map((c) => ({
-        name: c.name,
-        role: c.role,
-        age_description: c.age_description,
-        appearance: c.appearance,
-        clothing: c.clothing,
-        personality: c.personality,
-        description: c.description,
-        visual_prompt: c.visual_prompt,
-      }))
-    );
+    if (next.characters?.length) {
+      setCharacters(
+        next.characters.map((c) => ({
+          name: c.name,
+          role: c.role,
+          age_description: c.age_description,
+          appearance: c.appearance,
+          clothing: c.clothing,
+          personality: c.personality,
+          description: c.description,
+          visual_prompt: c.visual_prompt,
+        }))
+      );
+    }
     setError("");
+  }
 
-    if (next.status === "queued" || next.status === "draft") {
-      setBusy(true);
-      try {
-        await runGeneration(next);
-      } catch (err) {
-        setError(err instanceof Error ? err.message : "Version generation failed.");
-        setProgress("Failed");
-      } finally {
-        setBusy(false);
-      }
+  function handleEditStory() {
+    if (promptInputRef.current) {
+      promptInputRef.current.focus();
+      promptInputRef.current.scrollIntoView({ behavior: "smooth", block: "center" });
     }
   }
 
@@ -293,7 +313,7 @@ export default function Home() {
                 href="/signup"
                 className="rounded-xl bg-white px-4 py-2.5 text-xs font-semibold text-black transition hover:bg-white/90 shadow-lg shadow-white/5"
               >
-                Get started free →
+                Get 10 Free Credits →
               </Link>
             </div>
           </div>
@@ -304,15 +324,19 @@ export default function Home() {
           <div className="mx-auto max-w-4xl">
             <div className="inline-flex items-center gap-2 rounded-full border border-violet-500/30 bg-violet-500/10 px-4 py-1.5 text-xs font-semibold uppercase tracking-wider text-violet-300">
               <span className="h-2 w-2 rounded-full bg-violet-400 animate-pulse" />
-              Character Continuity Engine
+              100% Automated Character Continuity
             </div>
 
             <h1 className="mt-6 text-4xl font-extrabold tracking-tight sm:text-6xl sm:leading-[1.1]">
-              Transform Stories into Multi-Scene <span className="bg-gradient-to-r from-violet-400 via-purple-300 to-indigo-400 bg-clip-text text-transparent">Character Consistent</span> AI Videos.
+              Transform Stories into Multi-Scene{" "}
+              <span className="bg-gradient-to-r from-violet-400 via-purple-300 to-indigo-400 bg-clip-text text-transparent">
+                Consistent Character
+              </span>{" "}
+              AI Videos.
             </h1>
 
             <p className="mx-auto mt-6 max-w-2xl text-base leading-relaxed text-white/55 sm:text-lg">
-              Write your story, select your duration (10s, 30s, 60s), and generate full multi-scene animated videos with locked character continuity.
+              Type your story, choose duration, and let our engine automatically extract characters, plan scenes, generate clips, and assemble the final MP4.
             </p>
 
             <div className="mt-10 flex flex-col items-center justify-center gap-4 sm:flex-row">
@@ -320,7 +344,7 @@ export default function Home() {
                 href="/signup"
                 className="w-full sm:w-auto rounded-2xl bg-white px-8 py-4 text-sm font-semibold text-black transition hover:bg-white/90 shadow-xl shadow-white/10"
               >
-                Start Generating Videos Free
+                Claim 10 Free Credits & Start
               </Link>
               <Link
                 href="/login"
@@ -332,103 +356,54 @@ export default function Home() {
           </div>
         </section>
 
-        {/* 3-Step Simple User Journey */}
+        {/* 4-Step Simplified Journey */}
         <section className="border-t border-white/10 bg-white/[0.015] px-6 py-20">
           <div className="mx-auto max-w-7xl">
             <div className="text-center mb-16">
-              <p className="text-xs font-semibold uppercase tracking-[0.2em] text-violet-400">Streamlined Workflow</p>
-              <h2 className="mt-2 text-3xl font-bold tracking-tight sm:text-4xl">Simple, Powerful Creation</h2>
-              <p className="mt-3 text-sm text-white/45 max-w-xl mx-auto">
-                No complicated node graphs or manual rendering setups. Just write, choose duration, and generate.
-              </p>
+              <p className="text-xs font-semibold uppercase tracking-[0.2em] text-violet-400">Streamlined Creation</p>
+              <h2 className="mt-2 text-3xl font-bold tracking-tight sm:text-4xl">4 Steps to Your AI Video</h2>
             </div>
 
-            <div className="grid gap-6 md:grid-cols-3">
-              <div className="rounded-2xl border border-white/10 bg-black/40 p-8 text-center">
-                <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-2xl bg-violet-500/10 text-lg font-bold text-violet-400 mb-5 border border-violet-500/20">
+            <div className="grid gap-6 md:grid-cols-4">
+              <div className="rounded-2xl border border-white/10 bg-black/40 p-6 text-center">
+                <div className="mx-auto flex h-10 w-10 items-center justify-center rounded-xl bg-violet-500/10 text-sm font-bold text-violet-400 mb-4 border border-violet-500/20">
                   1
                 </div>
-                <h3 className="text-lg font-bold text-white">Write Your Story</h3>
+                <h3 className="text-base font-bold text-white">Story / Prompt</h3>
                 <p className="mt-2 text-xs leading-relaxed text-white/45">
-                  Type or paste your storyline or script. The AI automatically parses plot points into structured scenes.
+                  Type your storyline. The engine automatically detects characters and scene plot points.
                 </p>
               </div>
 
-              <div className="rounded-2xl border border-white/10 bg-black/40 p-8 text-center">
-                <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-2xl bg-violet-500/10 text-lg font-bold text-violet-400 mb-5 border border-violet-500/20">
+              <div className="rounded-2xl border border-white/10 bg-black/40 p-6 text-center">
+                <div className="mx-auto flex h-10 w-10 items-center justify-center rounded-xl bg-violet-500/10 text-sm font-bold text-violet-400 mb-4 border border-violet-500/20">
                   2
                 </div>
-                <h3 className="text-lg font-bold text-white">Pick Duration & Ratio</h3>
+                <h3 className="text-base font-bold text-white">Duration</h3>
                 <p className="mt-2 text-xs leading-relaxed text-white/45">
-                  Select 10s, 30s, or 60s and choose 9:16 vertical for Shorts/Reels or 16:9 landscape for standard video.
+                  Pick 10s (Free), 30s (Creator), or 60s (Pro). 1 second equals exactly 1 credit.
                 </p>
               </div>
 
-              <div className="rounded-2xl border border-white/10 bg-black/40 p-8 text-center">
-                <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-2xl bg-violet-500/10 text-lg font-bold text-violet-400 mb-5 border border-violet-500/20">
+              <div className="rounded-2xl border border-white/10 bg-black/40 p-6 text-center">
+                <div className="mx-auto flex h-10 w-10 items-center justify-center rounded-xl bg-violet-500/10 text-sm font-bold text-violet-400 mb-4 border border-violet-500/20">
                   3
                 </div>
-                <h3 className="text-lg font-bold text-white">Generate & Watch</h3>
+                <h3 className="text-base font-bold text-white">Aspect Ratio</h3>
                 <p className="mt-2 text-xs leading-relaxed text-white/45">
-                  The engine locks character consistency, renders each scene, and stitches the final cohesive MP4.
-                </p>
-              </div>
-            </div>
-          </div>
-        </section>
-
-        {/* Supported Formats */}
-        <section className="px-6 py-20 border-t border-white/10">
-          <div className="mx-auto max-w-7xl">
-            <div className="text-center mb-16">
-              <p className="text-xs font-semibold uppercase tracking-[0.2em] text-violet-400">Formats & Durations</p>
-              <h2 className="mt-2 text-3xl font-bold tracking-tight sm:text-4xl">Multi-Format AI Video</h2>
-            </div>
-
-            <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
-              <div className="rounded-2xl border border-white/10 bg-white/[0.02] p-6">
-                <div className="text-2xl mb-3">📱</div>
-                <h3 className="text-base font-semibold text-white">9:16 Vertical Shorts</h3>
-                <p className="mt-2 text-xs leading-relaxed text-white/45">
-                  Full HD vertical orientation designed specifically for TikTok, Instagram Reels, and YouTube Shorts.
+                  Select 9:16 vertical Shorts, 16:9 widescreen landscape, or 1:1 square.
                 </p>
               </div>
 
-              <div className="rounded-2xl border border-white/10 bg-white/[0.02] p-6">
-                <div className="text-2xl mb-3">🖥️</div>
-                <h3 className="text-base font-semibold text-white">16:9 Landscape Widescreen</h3>
+              <div className="rounded-2xl border border-white/10 bg-black/40 p-6 text-center">
+                <div className="mx-auto flex h-10 w-10 items-center justify-center rounded-xl bg-violet-500/10 text-sm font-bold text-violet-400 mb-4 border border-violet-500/20">
+                  4
+                </div>
+                <h3 className="text-base font-bold text-white">Generate & Watch</h3>
                 <p className="mt-2 text-xs leading-relaxed text-white/45">
-                  Cinematic widescreen suitable for standard YouTube videos, storytelling presentations, and courses.
+                  The AI locks character consistency across scenes and renders the final MP4.
                 </p>
               </div>
-
-              <div className="rounded-2xl border border-white/10 bg-white/[0.02] p-6">
-                <div className="text-2xl mb-3">🎨</div>
-                <h3 className="text-base font-semibold text-white">Locked Character Styles</h3>
-                <p className="mt-2 text-xs leading-relaxed text-white/45">
-                  Persistent character reference sheets keep characters recognizable from opening scene to credits.
-                </p>
-              </div>
-            </div>
-          </div>
-        </section>
-
-        {/* Bottom CTA */}
-        <section className="border-t border-white/10 bg-gradient-to-b from-transparent to-violet-950/20 px-6 py-20 text-center">
-          <div className="mx-auto max-w-3xl">
-            <h2 className="text-3xl font-bold tracking-tight sm:text-4xl">
-              Ready to generate your first AI video?
-            </h2>
-            <p className="mt-3 text-sm text-white/50">
-              Create an account now and start turning stories into consistent video projects.
-            </p>
-            <div className="mt-8 flex justify-center gap-4">
-              <Link
-                href="/signup"
-                className="rounded-2xl bg-white px-8 py-4 text-sm font-semibold text-black transition hover:bg-white/90 shadow-xl shadow-white/10"
-              >
-                Create Free Account
-              </Link>
             </div>
           </div>
         </section>
@@ -448,6 +423,16 @@ export default function Home() {
     <main className="min-h-screen bg-[#08090d] text-white">
       {/* Toast Notification */}
       <Toast message={toastMessage} type={toastType} onClose={() => setToastMessage("")} />
+
+      {/* Version History Slide-out Drawer */}
+      {project && (
+        <VersionHistoryDrawer
+          project={project}
+          isOpen={versionsDrawerOpen}
+          onClose={() => setVersionsDrawerOpen(false)}
+          onSelectVersion={selectVersion}
+        />
+      )}
 
       {/* Studio Header */}
       <header className="sticky top-0 z-40 border-b border-white/10 bg-[#0b0c11]/90 backdrop-blur-xl">
@@ -471,13 +456,15 @@ export default function Home() {
                 Admin
               </button>
             )}
+            <div className="rounded-lg border border-white/10 bg-white/[0.03] px-3 py-1.5 text-xs text-white/70">
+              Credits: <span className="font-semibold text-violet-300">{creditsBalance}</span>
+            </div>
             <button
               onClick={() => router.push("/dashboard")}
               className="rounded-lg border border-white/10 bg-white/[0.03] px-3 py-1.5 text-xs text-white/70 transition hover:text-white"
             >
               Dashboard
             </button>
-            <span className="hidden text-xs text-white/40 sm:block">{user.username}</span>
             <button
               onClick={logout}
               className="rounded-lg px-3 py-1.5 text-xs text-white/45 transition hover:text-white"
@@ -489,7 +476,7 @@ export default function Home() {
       </header>
 
       {/* Main Studio Grid */}
-      <div className="mx-auto grid max-w-7xl gap-8 px-6 py-10 lg:grid-cols-[1fr_440px]">
+      <div className="mx-auto grid max-w-7xl gap-8 px-6 py-10 lg:grid-cols-[1fr_460px]">
         {/* Left Column: Simple Story Creator */}
         <section aria-labelledby="studio-form-heading">
           {/* Header Title */}
@@ -499,28 +486,38 @@ export default function Home() {
                 <p className="mb-1 text-xs font-semibold uppercase tracking-[0.2em] text-violet-400">Creation Studio</p>
                 <h2 id="studio-form-heading" className="text-3xl font-bold tracking-tight">
                   {project && project.version_number > 0
-                    ? `Editing Version ${project.version_number}`
+                    ? `Editing Story (V${project.version_number})`
                     : "Create a Video"}
                 </h2>
               </div>
 
               {project && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    setProject(null);
-                    setTitle("");
-                    setPrompt("");
-                    setError("");
-                  }}
-                  className="rounded-xl border border-white/10 bg-white/[0.03] px-3 py-1.5 text-xs font-medium text-white/60 hover:text-white"
-                >
-                  + Blank Project
-                </button>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setVersionsDrawerOpen(true)}
+                    className="rounded-xl border border-violet-500/30 bg-violet-500/10 px-3 py-1.5 text-xs font-medium text-violet-300 hover:bg-violet-500/20 transition"
+                  >
+                    Version History · V{project.version_number}
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setProject(null);
+                      setTitle("");
+                      setPrompt("");
+                      setError("");
+                    }}
+                    className="rounded-xl border border-white/10 bg-white/[0.03] px-3 py-1.5 text-xs font-medium text-white/60 hover:text-white"
+                  >
+                    + Blank Project
+                  </button>
+                </div>
               )}
             </div>
             <p className="mt-1 text-xs leading-relaxed text-white/45">
-              Type your story, choose duration, and generate. Editing an existing project creates a new version while preserving previous videos.
+              Enter your story, choose duration & aspect ratio, and click generate. Character understanding and scene planning are handled automatically.
             </p>
           </div>
 
@@ -559,6 +556,7 @@ export default function Home() {
                 <span className="text-[11px] text-white/30">{prompt.length} characters</span>
               </div>
               <textarea
+                ref={promptInputRef}
                 id="project-prompt-input"
                 required
                 value={prompt}
@@ -567,8 +565,8 @@ export default function Home() {
                 rows={6}
                 placeholder={
                   inputType === "story"
-                    ? "A friendly village farmer walks along a mountain trail with his faithful buffalo during sunrise. They encounter a lost traveler, guide him back to the village, and celebrate with warm tea as evening falls…"
-                    : "SCENE 1: Morning mountain trail. Farmer walks alongside his buffalo.\nSCENE 2: The farmer helps a lost traveler.\nSCENE 3: Village gathering at sunset with hot tea."
+                    ? "A young explorer walks through a futuristic city at sunset and discovers a glowing doorway…"
+                    : "SCENE 1: Sunset futuristic city. A young explorer walks forward.\nSCENE 2: The explorer pauses before a glowing doorway."
                 }
                 className="w-full resize-none rounded-2xl border border-white/10 bg-white/[0.03] p-4 text-xs leading-relaxed text-white placeholder-white/20 outline-none transition focus:border-violet-500/60 disabled:opacity-50"
               />
@@ -576,30 +574,54 @@ export default function Home() {
 
             {/* Duration Selector: [ 10 sec ] [ 30 sec ] [ 60 sec ] */}
             <div>
-              <label className="mb-2 block text-xs font-medium uppercase tracking-wider text-white/60">
-                Duration
-              </label>
+              <div className="mb-2 flex items-center justify-between">
+                <label className="text-xs font-medium uppercase tracking-wider text-white/60">
+                  Duration (1 second = 1 credit)
+                </label>
+                <span className="text-[11px] text-violet-400 font-semibold">
+                  Cost: {duration} Credits
+                </span>
+              </div>
               <div className="grid grid-cols-3 gap-3">
                 {[
-                  { sec: 10, label: "10 sec", sub: "Quick Clip · 1 Scene" },
-                  { sec: 30, label: "30 sec", sub: "Standard · 3 Scenes" },
-                  { sec: 60, label: "60 sec", sub: "Narrative · 6 Scenes" },
-                ].map((item) => (
-                  <button
-                    key={item.sec}
-                    type="button"
-                    disabled={busy}
-                    onClick={() => setDuration(item.sec)}
-                    className={`flex flex-col items-center justify-center rounded-2xl border p-3 text-center transition ${
-                      duration === item.sec
-                        ? "border-violet-500 bg-violet-500/15 text-white shadow-lg shadow-violet-500/10"
-                        : "border-white/10 bg-white/[0.02] text-white/60 hover:border-white/20 hover:text-white"
-                    } disabled:opacity-50`}
-                  >
-                    <span className="text-sm font-bold">{item.label}</span>
-                    <span className="text-[10px] text-white/40 mt-0.5">{item.sub}</span>
-                  </button>
-                ))}
+                  { sec: 10, label: "10 sec", sub: "Quick Clip · 2 Scenes", minPlan: "free" },
+                  { sec: 30, label: "30 sec", sub: "Standard · 5 Scenes", minPlan: "creator" },
+                  { sec: 60, label: "60 sec", sub: "Narrative · 10 Scenes", minPlan: "pro" },
+                ].map((item) => {
+                  const isLocked = item.sec > maxAllowedDuration;
+                  const isSelected = duration === item.sec;
+
+                  return (
+                    <button
+                      key={item.sec}
+                      type="button"
+                      disabled={busy}
+                      onClick={() => {
+                        if (isLocked) {
+                          setError(`The ${item.sec}s duration requires the ${item.minPlan.toUpperCase()} plan. Upgrade to unlock longer videos.`);
+                        } else {
+                          setDuration(item.sec);
+                          setError("");
+                        }
+                      }}
+                      className={`relative flex flex-col items-center justify-center rounded-2xl border p-3.5 text-center transition ${
+                        isSelected
+                          ? "border-violet-500 bg-violet-500/15 text-white shadow-lg shadow-violet-500/10"
+                          : isLocked
+                          ? "border-white/5 bg-white/[0.01] text-white/40 hover:border-white/10"
+                          : "border-white/10 bg-white/[0.02] text-white/60 hover:border-white/20 hover:text-white"
+                      } disabled:opacity-50`}
+                    >
+                      {isLocked && (
+                        <span className="absolute top-2 right-2 rounded bg-white/5 px-1.5 py-0.5 text-[9px] font-semibold uppercase text-amber-300 border border-amber-500/20">
+                          🔒 {item.minPlan}
+                        </span>
+                      )}
+                      <span className="text-sm font-bold">{item.label}</span>
+                      <span className="text-[10px] text-white/40 mt-0.5">{item.sub}</span>
+                    </button>
+                  );
+                })}
               </div>
             </div>
 
@@ -632,22 +654,24 @@ export default function Home() {
               </div>
             </div>
 
-            {/* Optional Character Cast & Customization (Collapsible) */}
+            {/* Advanced Character Control — Locked for Free / Unlocked for Creator & Pro */}
             <div className="rounded-2xl border border-white/10 bg-white/[0.015] p-4">
               <div className="flex items-center justify-between">
                 <button
                   type="button"
-                  onClick={() => setShowCharacters(!showCharacters)}
+                  onClick={() => setShowAdvancedControl(!showAdvancedControl)}
                   className="flex items-center gap-2 text-xs font-semibold text-white/80 hover:text-white"
                 >
-                  <span>{showCharacters ? "▼" : "▶"}</span>
-                  <span>Character Cast & Style Details</span>
-                  <span className="rounded-md bg-white/5 px-2 py-0.5 text-[10px] text-white/40">
-                    {characters.length} character{characters.length > 1 ? "s" : ""}
-                  </span>
+                  <span>{showAdvancedControl ? "▼" : "▶"}</span>
+                  <span>Advanced Character Control</span>
+                  {!isPaidUser && (
+                    <span className="rounded-md bg-amber-500/10 px-2 py-0.5 text-[10px] font-semibold text-amber-300 border border-amber-500/20">
+                      🔒 Creator & Pro only
+                    </span>
+                  )}
                 </button>
 
-                {showCharacters && (
+                {isPaidUser && showAdvancedControl && (
                   <button
                     type="button"
                     disabled={busy}
@@ -659,9 +683,23 @@ export default function Home() {
                 )}
               </div>
 
-              {showCharacters && (
+              {showAdvancedControl && (
                 <div className="mt-4 pt-4 border-t border-white/5">
-                  <CharacterEditor characters={characters} setCharacters={setCharacters} disabled={busy} />
+                  {!isPaidUser ? (
+                    <div className="rounded-xl border border-amber-500/20 bg-amber-500/5 p-4 text-xs text-amber-200/80 space-y-3">
+                      <p className="leading-relaxed">
+                        Automatic story character extraction is enabled for Free accounts. Upgrade to Creator or Pro to manually customize character clothing, facial appearance, personality, and multiple character consistency sheets.
+                      </p>
+                      <Link
+                        href="/dashboard"
+                        className="inline-flex items-center gap-1.5 rounded-lg bg-amber-400 px-3.5 py-1.5 text-xs font-bold text-black transition hover:bg-amber-300"
+                      >
+                        Upgrade Plan →
+                      </Link>
+                    </div>
+                  ) : (
+                    <CharacterEditor characters={characters} setCharacters={setCharacters} disabled={busy} />
+                  )}
                 </div>
               )}
             </div>
@@ -693,34 +731,35 @@ export default function Home() {
               ) : project && (project.status === "completed" || project.status === "failed") ? (
                 <>
                   <span>✨</span>
-                  <span>Generate New Version (V{project.version_number + 1})</span>
+                  <span>Generate New Version (V{project.version_number + 1} · {duration} Credits)</span>
                 </>
               ) : (
                 <>
                   <span>✨</span>
-                  <span>Generate Video</span>
+                  <span>Generate Video ({duration} Credits)</span>
                 </>
               )}
             </button>
           </form>
-
-          {/* Version History Component */}
-          {project && <VersionHistory project={project} onSelect={selectVersion} disabled={busy} />}
         </section>
 
         {/* Right Column: Live Pipeline Monitor & Final Render */}
         <aside aria-label="Pipeline monitor">
-          <div className="sticky top-24 rounded-3xl border border-white/10 bg-[#0d0e14]/90 p-5 shadow-2xl backdrop-blur-xl">
-            <div className="mb-5 flex items-center justify-between border-b border-white/5 pb-4">
+          <div className="sticky top-24 rounded-3xl border border-white/10 bg-[#0d0e14]/90 p-5 shadow-2xl backdrop-blur-xl space-y-4">
+            <div className="flex items-center justify-between border-b border-white/5 pb-4">
               <div>
                 <h3 className="text-sm font-semibold text-white">Pipeline Monitor</h3>
                 <p className="mt-0.5 text-[11px] text-white/40">Status: {progress}</p>
               </div>
 
               {project && (
-                <span className="rounded-full bg-violet-500/10 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wider text-violet-300 border border-violet-500/20">
-                  V{project.version_number} · {project.status}
-                </span>
+                <button
+                  type="button"
+                  onClick={() => setVersionsDrawerOpen(true)}
+                  className="rounded-full bg-violet-500/10 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wider text-violet-300 border border-violet-500/20 hover:bg-violet-500/20 transition"
+                >
+                  Version History · V{project.version_number}
+                </button>
               )}
             </div>
 
@@ -730,9 +769,19 @@ export default function Home() {
               onRegenerate={regenerateScene}
               busySceneId={busySceneId}
               isGenerating={busy}
+              onRetry={() => {
+                if (project) {
+                  setBusy(true);
+                  runGeneration(project).finally(() => setBusy(false));
+                }
+              }}
             />
 
-            <FinalVideo project={project} />
+            <FinalVideo
+              project={project}
+              onEditStory={handleEditStory}
+              onOpenVersions={() => setVersionsDrawerOpen(true)}
+            />
           </div>
         </aside>
       </div>

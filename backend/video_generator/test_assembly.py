@@ -6,12 +6,14 @@ from django.test import TestCase
 from rest_framework.test import APIRequestFactory
 
 from .ai_views import ProjectAssembleView
+from .credits import grant_free_allowance
 from .models import VideoProject, VideoScene
 
 
 class ProjectAssemblyTests(TestCase):
     def setUp(self):
         self.factory = APIRequestFactory(); self.user = User.objects.create_user(username="assembler", password="StrongPass123")
+        grant_free_allowance(self.user)
         self.project = VideoProject.objects.create(user=self.user, title="Assembly Test", prompt="A short story", duration=10, aspect_ratio="9:16")
         self.env_patch = patch.dict(os.environ, {"JSON2VIDEO_API_KEY": "test-key"}); self.env_patch.start()
 

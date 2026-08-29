@@ -8,6 +8,8 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from .billing import ensure_subscription, get_plan
+from .character_extraction import extract_characters_from_story
 from .credits import get_or_create_credit_account, refund_transaction
 from .models import Character, CreditTransaction, UsageEvent, VideoProject, VideoScene
 from .rate_limit import allow_request, rate_limited_response
@@ -27,19 +29,29 @@ class VideoProjectCreateView(APIView):
     def post(self, request):
         if not allow_request(request, "project-create", limit=10, window=60):
             return rate_limited_response()
+        if not request.user.is_active:
+            return Response({"detail": "Please verify your email address before generating videos."}, status=status.HTTP_403_FORBIDDEN)
         title = str(request.data.get("title", "Untitled Video")).strip() or "Untitled Video"
         prompt = str(request.data.get("prompt", "")).strip()
         input_type = request.data.get("input_type", "story")
         aspect_ratio = request.data.get("aspect_ratio", "9:16")
-        characters_input = request.data.get("characters", [])
+        characters_input = request.data.get("characters")
         if not prompt:
             return Response({"detail": "Prompt or script is required."}, status=status.HTTP_400_BAD_REQUEST)
         if input_type not in VideoProject.InputType.values:
             return Response({"detail": "input_type must be story or script."}, status=status.HTTP_400_BAD_REQUEST)
-        if not isinstance(characters_input, list) or not characters_input:
+        if characters_input is None:
+            characters_input = extract_characters_from_story(prompt)
+        elif isinstance(characters_input, list) and not characters_input:
             return Response({"detail": "At least one recurring character is required for AI character video generation."}, status=status.HTTP_400_BAD_REQUEST)
+        elif not isinstance(characters_input, list):
+            return Response({"detail": "Characters must be a list."}, status=status.HTTP_400_BAD_REQUEST)
         try:
             duration, aspect_ratio = validate_generation_options(request.data.get("duration", 10), aspect_ratio)
+            subscription = ensure_subscription(request.user)
+            plan = get_plan(subscription.plan_code)
+            if duration > plan.max_duration:
+                return Response({"detail": f"Your {plan.name} plan supports videos up to {plan.max_duration} seconds. Upgrade to generate longer videos."}, status=status.HTTP_400_BAD_REQUEST)
             scene_plan = build_scene_plan(prompt, duration)
             normalized_characters = []
             for item in characters_input:
@@ -94,6 +106,8 @@ class VideoProjectVersionsView(APIView):
         return Response(VideoProjectSerializer(versions, many=True).data)
 
     def post(self, request, project_id):
+        if not request.user.is_active:
+            return Response({"detail": "Please verify your email address before generating videos."}, status=status.HTTP_403_FORBIDDEN)
         source = get_object_or_404(VideoProject.objects.prefetch_related("characters"), id=project_id, user=request.user)
         if not allow_request(request, "version-create", limit=10, window=60):
             return rate_limited_response()
@@ -109,12 +123,19 @@ class VideoProjectVersionsView(APIView):
             return Response({"detail": "input_type must be story or script."}, status=status.HTTP_400_BAD_REQUEST)
         try:
             duration, aspect_ratio = validate_generation_options(duration, aspect_ratio)
+            subscription = ensure_subscription(request.user)
+            plan = get_plan(subscription.plan_code)
+            if duration > plan.max_duration:
+                return Response({"detail": f"Your {plan.name} plan supports videos up to {plan.max_duration} seconds. Upgrade to generate longer videos."}, status=status.HTTP_400_BAD_REQUEST)
             scene_plan = build_scene_plan(prompt, duration)
         except (TypeError, ValueError) as exc:
             return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
         source_chars = list(source.characters.all())
         if characters_input is None:
-            characters_input = [{"name": c.name, "role": c.role, "age_description": c.age_description, "appearance": c.appearance, "clothing": c.clothing, "personality": c.personality, "description": c.description, "visual_prompt": c.visual_prompt} for c in source_chars]
+            if source_chars:
+                characters_input = [{"name": c.name, "role": c.role, "age_description": c.age_description, "appearance": c.appearance, "clothing": c.clothing, "personality": c.personality, "description": c.description, "visual_prompt": c.visual_prompt} for c in source_chars]
+            else:
+                characters_input = extract_characters_from_story(prompt)
         if not isinstance(characters_input, list) or not characters_input:
             return Response({"detail": "At least one recurring character is required."}, status=status.HTTP_400_BAD_REQUEST)
         source_by_name = {c.name.strip().lower(): c for c in source_chars}

@@ -8,6 +8,7 @@ interface ProgressPanelProps {
   onRegenerate: (sceneId: number) => void;
   busySceneId: number | null;
   isGenerating?: boolean;
+  onRetry?: () => void;
 }
 
 export function ProgressPanel({
@@ -16,6 +17,7 @@ export function ProgressPanel({
   onRegenerate,
   busySceneId,
   isGenerating = false,
+  onRetry,
 }: ProgressPanelProps) {
   if (!project) {
     return (
@@ -30,6 +32,46 @@ export function ProgressPanel({
       </div>
     );
   }
+
+  const isFailed = project.status === "failed";
+  const isCompleted = project.status === "completed";
+
+  // Derive real pipeline stages based strictly on real backend state
+  const hasCharacters = Boolean(project.characters && project.characters.length > 0);
+  const allCharactersHaveRefs = hasCharacters && project.characters.every((c) => Boolean(c.reference_image_url));
+  const scenesCount = project.scenes?.length || 0;
+  const completedScenesCount = project.scenes?.filter((s) => s.status === "completed").length || 0;
+  const anySceneProcessing = project.scenes?.some((s) => s.status === "processing");
+  const allScenesCompleted = scenesCount > 0 && completedScenesCount === scenesCount;
+  const isAssembling = project.provider_project_id && project.status === "processing";
+
+  const stages = [
+    {
+      id: "story",
+      label: "Understanding story",
+      status: scenesCount > 0 ? "done" : isGenerating ? "active" : "pending",
+    },
+    {
+      id: "characters",
+      label: "Creating characters",
+      status: allCharactersHaveRefs ? "done" : isGenerating && scenesCount > 0 ? "active" : "pending",
+    },
+    {
+      id: "scenes",
+      label: `Generating scenes (${completedScenesCount}/${scenesCount})`,
+      status: allScenesCompleted ? "done" : anySceneProcessing || (isGenerating && allCharactersHaveRefs) ? "active" : "pending",
+    },
+    {
+      id: "assembly",
+      label: "Assembling video",
+      status: isCompleted ? "done" : isAssembling ? "active" : "pending",
+    },
+    {
+      id: "ready",
+      label: "Video Ready",
+      status: isCompleted ? "done" : "pending",
+    },
+  ];
 
   const getStatusBadge = (status: VideoScene["status"]) => {
     switch (status) {
@@ -46,7 +88,7 @@ export function ProgressPanel({
         return (
           <span className="inline-flex items-center gap-1.5 rounded-full bg-amber-500/10 px-2.5 py-0.5 text-[11px] font-medium text-amber-400 border border-amber-500/20">
             <svg className="h-3 w-3 animate-spin" fill="none" viewBox="0 0 24 24">
-              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth={4} />
               <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
             </svg>
             Rendering
@@ -74,24 +116,91 @@ export function ProgressPanel({
   return (
     <div className="space-y-5">
       {/* Current Step Banner */}
-      <div className="rounded-xl border border-white/10 bg-white/[0.025] p-3.5">
-        <div className="flex items-center gap-2.5">
-          {isGenerating ? (
-            <div className="h-2.5 w-2.5 animate-pulse rounded-full bg-violet-400" />
-          ) : (
-            <div className="h-2.5 w-2.5 rounded-full bg-emerald-400" />
-          )}
-          <p className="text-xs font-semibold text-white">{progress}</p>
+      <div className="rounded-2xl border border-white/10 bg-white/[0.025] p-4 shadow-sm">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2.5">
+            {isFailed ? (
+              <span className="flex h-3 w-3 items-center justify-center rounded-full bg-red-500 text-[9px] font-bold text-white">
+                !
+              </span>
+            ) : isGenerating ? (
+              <div className="h-2.5 w-2.5 animate-pulse rounded-full bg-violet-400 shadow-sm shadow-violet-400/50" />
+            ) : isCompleted ? (
+              <div className="h-2.5 w-2.5 rounded-full bg-emerald-400 shadow-sm shadow-emerald-400/50" />
+            ) : (
+              <div className="h-2.5 w-2.5 rounded-full bg-white/40" />
+            )}
+            <p className="text-xs font-semibold text-white">{progress}</p>
+          </div>
+
+          <span className="text-[10px] font-medium uppercase tracking-wider text-white/40">
+            V{project.version_number}
+          </span>
         </div>
+
+        {/* Failed State Display */}
+        {isFailed && (
+          <div className="mt-3.5 border-t border-white/5 pt-3">
+            <p className="text-xs text-red-300">
+              ❌ {project.error_message || "Generation failed. Credits refunded."}
+            </p>
+            {onRetry && (
+              <button
+                type="button"
+                onClick={onRetry}
+                className="mt-3 rounded-xl bg-white px-4 py-2 text-xs font-semibold text-black transition hover:bg-white/90"
+              >
+                Try Again
+              </button>
+            )}
+          </div>
+        )}
       </div>
 
-      {/* Character References Section (if any) */}
+      {/* Real-State Progress Stepper */}
+      {(isGenerating || isCompleted || project.status === "processing") && (
+        <div className="rounded-2xl border border-white/10 bg-black/30 p-4 space-y-2.5">
+          <h4 className="text-[11px] font-semibold uppercase tracking-wider text-white/40 mb-3">
+            Generation Stages
+          </h4>
+          {stages.map((st) => (
+            <div key={st.id} className="flex items-center gap-3 text-xs">
+              {st.status === "done" ? (
+                <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-emerald-500/15 text-emerald-400 font-bold text-[10px] border border-emerald-500/30">
+                  ✓
+                </span>
+              ) : st.status === "active" ? (
+                <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-violet-500/20 text-violet-300 font-bold text-[10px] border border-violet-500/40 animate-pulse">
+                  ●
+                </span>
+              ) : (
+                <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-white/5 text-white/30 font-bold text-[10px] border border-white/10">
+                  ○
+                </span>
+              )}
+              <span
+                className={`transition ${
+                  st.status === "done"
+                    ? "text-white font-medium"
+                    : st.status === "active"
+                    ? "text-violet-300 font-semibold"
+                    : "text-white/35"
+                }`}
+              >
+                {st.label}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Character References Section */}
       {project.characters && project.characters.length > 0 && (
         <div>
           <h4 className="mb-2.5 text-[11px] font-semibold uppercase tracking-wider text-white/40">
-            Character Reference Consistency
+            Character Reference Continuity
           </h4>
-          <div className="grid gap-2 sm:grid-cols-2">
+          <div className="grid gap-2">
             {project.characters.map((char: Character) => (
               <div
                 key={char.id}
@@ -136,58 +245,40 @@ export function ProgressPanel({
               key={scene.id}
               className="rounded-xl border border-white/10 bg-black/25 p-3.5 transition hover:border-white/20"
             >
-              {/* Scene Title + Status */}
               <div className="flex items-center justify-between gap-2">
-                <div className="flex items-center gap-2">
-                  <span className="text-xs font-semibold text-white">Scene {scene.scene_number}</span>
-                  <span className="text-[11px] text-white/35">· {scene.duration}s</span>
-                </div>
+                <span className="text-xs font-semibold text-white">
+                  Scene {scene.scene_number} ({scene.duration}s)
+                </span>
                 {getStatusBadge(scene.status)}
               </div>
 
-              {/* Scene Prompt */}
-              <p className="mt-2 line-clamp-2 text-xs leading-relaxed text-white/50">{scene.prompt}</p>
+              <p className="mt-2 line-clamp-2 text-xs leading-relaxed text-white/45">
+                {scene.prompt}
+              </p>
 
-              {/* Completed Scene Preview */}
-              {scene.status === "completed" && scene.video_url && (
+              {scene.video_url && (
                 <div className="mt-3 overflow-hidden rounded-lg border border-white/10 bg-black">
                   <video
                     src={scene.video_url}
                     controls
                     playsInline
-                    className="max-h-40 w-full object-contain"
+                    className="max-h-36 w-full object-contain"
                   />
                 </div>
               )}
 
-              {/* Error Message & Regenerate Button */}
               {scene.status === "failed" && (
-                <div className="mt-3 rounded-lg border border-red-500/20 bg-red-500/5 p-3">
-                  <p className="text-xs text-red-300 leading-relaxed">
-                    {scene.error_message || "Generation encountered an issue at the provider."}
-                  </p>
+                <div className="mt-2 flex items-center justify-between border-t border-white/5 pt-2">
+                  <span className="text-[10px] text-red-300 line-clamp-1">
+                    {scene.error_message || "Generation error"}
+                  </span>
                   <button
                     type="button"
-                    disabled={busySceneId !== null || isGenerating}
+                    disabled={busySceneId === scene.id}
                     onClick={() => onRegenerate(scene.id)}
-                    className="mt-2.5 inline-flex items-center gap-1.5 rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-1.5 text-xs font-medium text-red-200 transition hover:bg-red-500/20 disabled:cursor-not-allowed disabled:opacity-40"
+                    className="text-xs font-medium text-violet-400 hover:text-violet-300"
                   >
-                    {busySceneId === scene.id ? (
-                      <>
-                        <svg className="h-3 w-3 animate-spin" fill="none" viewBox="0 0 24 24">
-                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
-                        </svg>
-                        Regenerating…
-                      </>
-                    ) : (
-                      <>
-                        <svg className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                          <path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-                        </svg>
-                        Regenerate Scene
-                      </>
-                    )}
+                    {busySceneId === scene.id ? "Retrying…" : "Retry"}
                   </button>
                 </div>
               )}
