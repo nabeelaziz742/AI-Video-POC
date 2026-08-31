@@ -1,5 +1,6 @@
 from django.contrib.auth.models import User
 from rest_framework.test import APITestCase
+from .models import EmailVerificationToken
 
 
 class AuthAndOwnershipTests(APITestCase):
@@ -21,7 +22,8 @@ class AuthAndOwnershipTests(APITestCase):
     def test_signup_creates_authenticated_session(self):
         response = self.client.post("/api/video/auth/signup/", {"username": "charlie", "email": "charlie@example.com", "password": "StrongPass789"}, format="json")
         self.assertEqual(response.status_code, 201)
-        token = response.data["verification_token"]
+        token_obj = EmailVerificationToken.objects.filter(user__username="charlie").latest("created_at")
+        token = token_obj.token
         verify = self.client.post("/api/video/auth/verify-email/", {"token": token}, format="json")
         self.assertEqual(verify.status_code, 200)
         me = self.client.get("/api/video/auth/me/")

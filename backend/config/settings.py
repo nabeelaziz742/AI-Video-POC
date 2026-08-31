@@ -11,7 +11,7 @@ load_dotenv(BASE_DIR / ".env")
 
 SECRET_KEY = os.getenv("DJANGO_SECRET_KEY", "dev-only-change-me")
 DEBUG = os.getenv("DJANGO_DEBUG", "True").lower() == "true"
-ALLOWED_HOSTS = [h.strip() for h in os.getenv("DJANGO_ALLOWED_HOSTS", "127.0.0.1,localhost").split(",") if h.strip()]
+ALLOWED_HOSTS = [h.strip() for h in os.getenv("DJANGO_ALLOWED_HOSTS", "127.0.0.1,localhost,testserver").split(",") if h.strip()]
 if not DEBUG and SECRET_KEY == "dev-only-change-me":
     raise ImproperlyConfigured("DJANGO_SECRET_KEY must be configured when DEBUG=False.")
 
@@ -106,6 +106,14 @@ STRIPE_PRICE_PRO = os.getenv("STRIPE_PRICE_PRO")
 STRIPE_SUCCESS_URL = os.getenv("STRIPE_SUCCESS_URL", "http://localhost:3000/dashboard?billing=success")
 STRIPE_CANCEL_URL = os.getenv("STRIPE_CANCEL_URL", "http://localhost:3000/dashboard?billing=cancelled")
 PROVIDER_JOB_TIMEOUT_SECONDS = int(os.getenv("PROVIDER_JOB_TIMEOUT_SECONDS", "1800"))
+
+# Email Configuration & URLs
+EMAIL_BACKEND = os.getenv(
+    "EMAIL_BACKEND",
+    "django.core.mail.backends.console.EmailBackend" if DEBUG else "django.core.mail.backends.smtp.EmailBackend",
+)
+DEFAULT_FROM_EMAIL = os.getenv("DEFAULT_FROM_EMAIL", "AI Video Studio <no-reply@aivideostudio.com>")
+FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:3000")
 
 # Cookies & Security
 SESSION_COOKIE_HTTPONLY = True

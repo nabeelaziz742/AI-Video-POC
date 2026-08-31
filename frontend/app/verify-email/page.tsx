@@ -17,18 +17,21 @@ function VerifyEmailContent() {
   );
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
+  const [isAlreadyUsed, setIsAlreadyUsed] = useState(false);
   const [resendBusy, setResendBusy] = useState(false);
   const [resendSuccess, setResendSuccess] = useState("");
 
   useEffect(() => {
     if (!tokenParam) return;
     performVerification(tokenParam);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tokenParam]);
 
   async function performVerification(tok: string) {
     if (!tok.trim()) return;
     setStatusState("verifying");
     setError("");
+    setIsAlreadyUsed(false);
     try {
       const data = await api<{ message: string; user: User }>("/auth/verify-email/", {
         method: "POST",
@@ -36,13 +39,22 @@ function VerifyEmailContent() {
         body: JSON.stringify({ token: tok.trim() }),
       });
       setStatusState("success");
-      setMessage(data.message || "Email verified successfully! 10 Free credits have been granted.");
-      setTimeout(() => {
+      setMessage(data.message || "Email verified successfully! 10 Free credits have been granted to your account.");
+      const redirectTimer = setTimeout(() => {
         router.push("/dashboard");
-      }, 3000);
+      }, 1500);
+      return () => clearTimeout(redirectTimer);
     } catch (err) {
       setStatusState("error");
-      setError(err instanceof Error ? err.message : "Verification failed. The token may be expired or already used.");
+      const errText = err instanceof Error ? err.message : "Verification failed.";
+      if (errText.toLowerCase().includes("already been used")) {
+        setIsAlreadyUsed(true);
+        setError("This verification link has already been used.");
+      } else if (errText.toLowerCase().includes("invalid or expired") || errText.toLowerCase().includes("expired")) {
+        setError("Invalid or expired verification link.");
+      } else {
+        setError(errText || "Invalid or expired verification link.");
+      }
     }
   }
 
@@ -64,7 +76,7 @@ function VerifyEmailContent() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email: resendEmail.trim() }),
       });
-      setResendSuccess(data.message || "A new verification link has been sent to your email.");
+      setResendSuccess(data.message || "Verification email sent. Please check your inbox.");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Unable to resend verification email.");
     } finally {
@@ -93,8 +105,8 @@ function VerifyEmailContent() {
         {/* Card */}
         <div className="rounded-3xl border border-white/10 bg-[#0d0e14]/80 p-8 shadow-2xl backdrop-blur-xl">
           {statusState === "verifying" && (
-            <div className="py-8 text-center">
-              <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-violet-500/10 text-violet-400">
+            <div className="py-8 text-center space-y-4">
+              <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-violet-500/10 text-violet-400">
                 <svg className="h-6 w-6 animate-spin" fill="none" viewBox="0 0 24 24">
                   <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth={4} />
                   <path
@@ -105,24 +117,26 @@ function VerifyEmailContent() {
                 </svg>
               </div>
               <h2 className="text-lg font-bold text-white">Verifying your token…</h2>
-              <p className="mt-2 text-xs text-white/40">
+              <p className="text-xs text-white/40">
                 Please wait while we activate your account and grant your 10 Free credits.
               </p>
             </div>
           )}
 
           {statusState === "success" && (
-            <div className="py-6 text-center">
-              <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-emerald-500/10 text-3xl text-emerald-400 border border-emerald-500/20 shadow-lg shadow-emerald-500/10 animate-bounce">
+            <div className="py-6 text-center space-y-4">
+              <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-full bg-emerald-500/10 text-3xl text-emerald-400 border border-emerald-500/20 shadow-lg shadow-emerald-500/10 animate-bounce">
                 ✓
               </div>
               <h2 className="text-xl font-bold text-white">Account Activated!</h2>
-              <p className="mt-2 text-xs leading-relaxed text-emerald-300">
+              <p className="text-xs leading-relaxed text-emerald-300">
                 {message}
               </p>
-              <div className="mt-6">
+              <p className="text-[11px] text-white/40">Redirecting directly to your dashboard…</p>
+              <div className="pt-2">
                 <Link
                   href="/dashboard"
+                  id="verified-dashboard-btn"
                   className="inline-flex w-full items-center justify-center rounded-2xl bg-white px-6 py-3.5 text-sm font-semibold text-black transition hover:bg-white/90 shadow-xl shadow-white/10"
                 >
                   Go to Dashboard →
@@ -150,64 +164,91 @@ function VerifyEmailContent() {
                 </div>
               )}
 
-              {/* Manual Token Entry Form */}
-              <form onSubmit={handleManualSubmit} className="space-y-4">
-                <div>
-                  <label
-                    htmlFor="verify-token-input"
-                    className="mb-2 block text-xs font-medium uppercase tracking-wider text-white/60"
-                  >
-                    Enter Verification Token
-                  </label>
-                  <input
-                    id="verify-token-input"
-                    type="text"
-                    required
-                    value={tokenInput}
-                    onChange={(e) => setTokenInput(e.target.value)}
-                    placeholder="Paste verification token here"
-                    className="w-full rounded-xl border border-white/10 bg-white/[0.03] px-4 py-3 text-sm text-white placeholder-white/25 outline-none transition focus:border-violet-500"
-                  />
+              {isAlreadyUsed ? (
+                /* Already used token state */
+                <div className="space-y-4">
+                  <p className="text-xs text-white/60 leading-relaxed">
+                    This verification link has already been used to activate your account. If you are already active, you can go straight to your dashboard or sign in.
+                  </p>
+                  <div className="space-y-3 pt-2">
+                    <Link
+                      href="/dashboard"
+                      id="already-used-dashboard-btn"
+                      className="inline-flex w-full items-center justify-center rounded-2xl bg-white px-6 py-3.5 text-sm font-semibold text-black transition hover:bg-white/90 shadow-xl shadow-white/10"
+                    >
+                      Go to Dashboard →
+                    </Link>
+                    <Link
+                      href="/login"
+                      className="inline-flex w-full items-center justify-center rounded-2xl border border-white/10 bg-white/[0.04] px-6 py-3.5 text-sm font-semibold text-white transition hover:bg-white/10"
+                    >
+                      Go to Login
+                    </Link>
+                  </div>
                 </div>
+              ) : (
+                /* Standard verification form & resend */
+                <>
+                  <form onSubmit={handleManualSubmit} className="space-y-4">
+                    <div>
+                      <label
+                        htmlFor="verify-token-input"
+                        className="mb-2 block text-xs font-medium uppercase tracking-wider text-white/60"
+                      >
+                        Enter Verification Token
+                      </label>
+                      <input
+                        id="verify-token-input"
+                        type="text"
+                        required
+                        value={tokenInput}
+                        onChange={(e) => setTokenInput(e.target.value)}
+                        placeholder="Paste verification token here"
+                        className="w-full rounded-xl border border-white/10 bg-white/[0.03] px-4 py-3 text-sm text-white placeholder-white/25 outline-none transition focus:border-violet-500"
+                      />
+                    </div>
 
-                <button
-                  type="submit"
-                  disabled={!tokenInput.trim()}
-                  className="w-full rounded-2xl bg-white px-6 py-3.5 text-sm font-semibold text-black transition hover:bg-white/90 shadow-xl shadow-white/10 disabled:cursor-not-allowed disabled:opacity-40"
-                >
-                  Verify Token & Activate Account
-                </button>
-              </form>
+                    <button
+                      type="submit"
+                      id="verify-token-submit-btn"
+                      disabled={!tokenInput.trim()}
+                      className="w-full rounded-2xl bg-white px-6 py-3.5 text-sm font-semibold text-black transition hover:bg-white/90 shadow-xl shadow-white/10 disabled:cursor-not-allowed disabled:opacity-40"
+                    >
+                      Verify Token & Activate Account
+                    </button>
+                  </form>
 
-              {/* Resend Section */}
-              <div className="mt-8 border-t border-white/10 pt-6">
-                <h3 className="text-xs font-semibold uppercase tracking-wider text-white/40 mb-3">
-                  Didn&apos;t receive a verification link?
-                </h3>
+                  {/* Resend Section */}
+                  <div className="mt-8 border-t border-white/10 pt-6">
+                    <h3 className="text-xs font-semibold uppercase tracking-wider text-white/40 mb-3">
+                      Didn&apos;t receive a verification link?
+                    </h3>
 
-                {resendSuccess && (
-                  <p className="mb-3 text-xs text-emerald-400">✓ {resendSuccess}</p>
-                )}
+                    {resendSuccess && (
+                      <p className="mb-3 text-xs text-emerald-400">✓ {resendSuccess}</p>
+                    )}
 
-                <form onSubmit={handleResend} className="flex gap-2">
-                  <input
-                    type="email"
-                    required
-                    value={resendEmail}
-                    onChange={(e) => setResendEmail(e.target.value)}
-                    placeholder="Your account email address"
-                    disabled={resendBusy}
-                    className="flex-1 rounded-xl border border-white/10 bg-white/[0.03] px-3.5 py-2.5 text-xs text-white placeholder-white/25 outline-none transition focus:border-violet-500 disabled:opacity-50"
-                  />
-                  <button
-                    type="submit"
-                    disabled={resendBusy || !resendEmail.trim()}
-                    className="rounded-xl border border-white/10 bg-white/[0.05] px-4 py-2.5 text-xs font-semibold text-white transition hover:bg-white/10 disabled:opacity-40"
-                  >
-                    {resendBusy ? "Sending…" : "Resend"}
-                  </button>
-                </form>
-              </div>
+                    <form onSubmit={handleResend} className="flex gap-2">
+                      <input
+                        type="email"
+                        required
+                        value={resendEmail}
+                        onChange={(e) => setResendEmail(e.target.value)}
+                        placeholder="Your account email address"
+                        disabled={resendBusy}
+                        className="flex-1 rounded-xl border border-white/10 bg-white/[0.03] px-3.5 py-2.5 text-xs text-white placeholder-white/25 outline-none transition focus:border-violet-500 disabled:opacity-50"
+                      />
+                      <button
+                        type="submit"
+                        disabled={resendBusy || !resendEmail.trim()}
+                        className="rounded-xl border border-white/10 bg-white/[0.05] px-4 py-2.5 text-xs font-semibold text-white transition hover:bg-white/10 disabled:opacity-40"
+                      >
+                        {resendBusy ? "Sending…" : "Resend"}
+                      </button>
+                    </form>
+                  </div>
+                </>
+              )}
             </div>
           )}
 

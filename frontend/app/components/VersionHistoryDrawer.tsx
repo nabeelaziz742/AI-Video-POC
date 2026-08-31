@@ -21,16 +21,24 @@ export function VersionHistoryDrawer({
 
   useEffect(() => {
     if (!isOpen || !project?.id) return;
-    setLoading(true);
+    let active = true;
     api<VideoProject[]>(`/projects/${project.id}/versions/`)
       .then((data) => {
+        if (!active) return;
         // Sort descending: latest version first
         const sorted = [...data].sort((a, b) => b.version_number - a.version_number);
         setVersions(sorted);
       })
-      .catch(() => setVersions([project]))
-      .finally(() => setLoading(false));
-  }, [isOpen, project?.id, project?.version_number]);
+      .catch(() => {
+        if (active) setVersions([project]);
+      })
+      .finally(() => {
+        if (active) setLoading(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [isOpen, project]);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {

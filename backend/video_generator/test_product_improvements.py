@@ -83,7 +83,8 @@ class ProductImprovementsTests(TestCase):
         self.assertIn("verify your email", login_resp.data["detail"].lower())
 
         # Verify email using single-use token
-        token = signup_resp.data["verification_token"]
+        token_obj = EmailVerificationToken.objects.filter(user=user).latest("created_at")
+        token = token_obj.token
         verify_resp = self.client.post(
             "/api/video/auth/verify-email/",
             {"token": token},

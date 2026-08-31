@@ -16,6 +16,7 @@ from rest_framework.views import APIView
 
 from .billing import ensure_subscription
 from .credits import get_or_create_credit_account, grant_free_allowance
+from .emails import send_account_verification_email
 from .models import EmailVerificationToken
 from .rate_limit import allow_request, rate_limited_response
 
@@ -153,11 +154,14 @@ class SignupView(APIView):
         # Generate single-use expiring email verification token
         token_str = secrets.token_urlsafe(32)
         expires_at = timezone.now() + timedelta(hours=24)
-        token_obj = EmailVerificationToken.objects.create(
+        EmailVerificationToken.objects.create(
             user=user,
             token=token_str,
             expires_at=expires_at,
         )
+
+        # Dispatch verification email
+        send_account_verification_email(user, token_str)
 
         return Response(
             {
@@ -166,7 +170,6 @@ class SignupView(APIView):
                     "and activate your 10 Free credits."
                 ),
                 "email": email,
-                "verification_token": token_obj.token,
             },
             status=status.HTTP_201_CREATED,
         )
@@ -183,20 +186,20 @@ class VerifyEmailView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        token_obj = EmailVerificationToken.objects.filter(token=token_str).first()
+        token_obj = EmailVerificationToken.objects.select_related("user").filter(token=token_str).first()
         if not token_obj or token_obj.expires_at < timezone.now():
             return Response(
-                {"detail": "Invalid or expired verification token."},
+                {"detail": "Invalid or expired verification link."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
         if token_obj.used_at is not None:
             return Response(
-                {"detail": "This verification token has already been used."},
+                {"detail": "This verification link has already been used."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        # Activate user
+        # Activate user associated with the token
         user = token_obj.user
         token_obj.used_at = timezone.now()
         token_obj.save(update_fields=["used_at"])
@@ -204,7 +207,7 @@ class VerifyEmailView(APIView):
         user.is_active = True
         user.save(update_fields=["is_active"])
 
-        # Grant 10 Free credits post-verification
+        # Grant 10 Free credits post-verification (idempotent)
         grant_free_allowance(user)
 
         # Auto-login the verified user
@@ -259,16 +262,18 @@ class ResendVerificationView(APIView):
 
         token_str = secrets.token_urlsafe(32)
         expires_at = timezone.now() + timedelta(hours=24)
-        token_obj = EmailVerificationToken.objects.create(
+        EmailVerificationToken.objects.create(
             user=user,
             token=token_str,
             expires_at=expires_at,
         )
 
+        # Dispatch verification email
+        send_account_verification_email(user, token_str)
+
         return Response(
             {
-                "message": "A new verification email has been sent.",
-                "verification_token": token_obj.token,
+                "message": "Verification email sent. Please check your inbox.",
             },
             status=status.HTTP_200_OK,
         )
