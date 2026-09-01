@@ -104,8 +104,15 @@ class VideoScene(models.Model):
     def __str__(self): return f"{self.project.title} — Scene {self.scene_number}"
 
 class CreditAccount(models.Model):
-    user=models.OneToOneField(settings.AUTH_USER_MODEL,related_name="credit_account",on_delete=models.CASCADE); balance=models.PositiveIntegerField(default=0); monthly_allowance=models.PositiveIntegerField(default=0); updated_at=models.DateTimeField(auto_now=True)
-    def __str__(self): return f"{self.user} — {self.balance} credits"
+    user = models.OneToOneField(settings.AUTH_USER_MODEL, related_name="credit_account", on_delete=models.CASCADE, null=True, blank=True)
+    workspace = models.OneToOneField("Workspace", related_name="credit_pool", on_delete=models.CASCADE, null=True, blank=True)
+    balance = models.PositiveIntegerField(default=0)
+    monthly_allowance = models.PositiveIntegerField(default=0)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        owner_str = self.workspace.name if self.workspace else str(self.user)
+        return f"{owner_str} — {self.balance} credits"
 
 class CreditTransaction(models.Model):
     class Kind(models.TextChoices): GRANT="grant","Grant"; RESERVE="reserve","Reserve"; RELEASE="release","Release"; CONSUME="consume","Consume"; REFUND="refund","Refund"; ADJUSTMENT="adjustment","Adjustment"
@@ -118,8 +125,19 @@ class UsageEvent(models.Model):
     user=models.ForeignKey(settings.AUTH_USER_MODEL,related_name="video_usage_events",on_delete=models.CASCADE); kind=models.CharField(max_length=30,choices=Kind.choices,db_index=True); quantity=models.PositiveIntegerField(default=1); credits=models.PositiveIntegerField(default=0); project=models.ForeignKey(VideoProject,related_name="usage_events",on_delete=models.SET_NULL,null=True,blank=True); scene=models.ForeignKey(VideoScene,related_name="usage_events",on_delete=models.SET_NULL,null=True,blank=True); character=models.ForeignKey(Character,related_name="usage_events",on_delete=models.SET_NULL,null=True,blank=True); idempotency_key=models.CharField(max_length=160,unique=True); created_at=models.DateTimeField(auto_now_add=True)
 
 class Subscription(models.Model):
-    class Plan(models.TextChoices): FREE="free","Free"; CREATOR="creator","Creator"; PRO="pro","Pro"
-    class Status(models.TextChoices): ACTIVE="active","Active"; TRIALING="trialing","Trialing"; PAST_DUE="past_due","Past due"; CANCELLED="cancelled","Cancelled"
+    class Plan(models.TextChoices):
+        FREE = "free", "Free"
+        CREATOR = "creator", "Creator"
+        PRO = "pro", "Pro"
+        STUDIO = "studio", "Studio"
+        ENTERPRISE = "enterprise", "Enterprise"
+
+    class Status(models.TextChoices):
+        ACTIVE = "active", "Active"
+        TRIALING = "trialing", "Trialing"
+        PAST_DUE = "past_due", "Past due"
+        CANCELLED = "cancelled", "Cancelled"
+
     user=models.OneToOneField(settings.AUTH_USER_MODEL,related_name="subscription",on_delete=models.CASCADE); plan_code=models.CharField(max_length=30,choices=Plan.choices,default="free"); status=models.CharField(max_length=30,choices=Status.choices,default="active"); provider=models.CharField(max_length=30,default="manual"); provider_customer_id=models.CharField(max_length=120,blank=True); provider_subscription_id=models.CharField(max_length=120,blank=True,db_index=True); current_period_start=models.DateTimeField(blank=True,null=True); current_period_end=models.DateTimeField(blank=True,null=True); cancel_at_period_end=models.BooleanField(default=False); created_at=models.DateTimeField(auto_now_add=True); updated_at=models.DateTimeField(auto_now=True)
     def __str__(self): return f"{self.user} — {self.plan_code}"
 

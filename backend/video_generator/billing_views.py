@@ -15,7 +15,23 @@ class PlansView(APIView):
 
     def get(self, request):
         configured = stripe_configured()
-        plans = [{"code": plan.code, "name": plan.name, "monthly_price_usd": str(plan.monthly_price_usd), "monthly_credits": plan.monthly_credits, "max_duration": plan.max_duration, "available": plan.code == "free" or configured} for plan in PLANS.values()]
+        plans = [
+            {
+                "code": plan.code,
+                "name": plan.name,
+                "monthly_price_usd": str(plan.monthly_price_usd),
+                "monthly_credits": plan.monthly_credits,
+                "max_duration": plan.max_duration,
+                "max_team_members": plan.max_team_members,
+                "max_workspaces": plan.max_workspaces,
+                "export_quality": plan.export_quality,
+                "priority_render": plan.priority_render,
+                "support_tier": plan.support_tier,
+                "available": plan.code == "free" or configured,
+            }
+            for plan in PLANS.values()
+            if plan.code != "pro"  # Hide legacy alias from primary plan listings
+        ]
         return Response({"plans": plans})
 
 

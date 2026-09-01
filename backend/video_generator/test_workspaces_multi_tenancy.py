@@ -3,9 +3,11 @@ from django.test import TestCase
 from rest_framework import status
 from rest_framework.test import APIClient
 
+from .billing import ensure_subscription
 from .models import (
     Character,
     EmailVerificationToken,
+    Subscription,
     VideoProject,
     VideoScene,
     Workspace,
@@ -27,10 +29,16 @@ class WorkspaceMultiTenancyTests(TestCase):
         self.client_a = APIClient()
         self.user_a = User.objects.create_user(username="alice", email="alice@test.com", password="Password123!")
         self.client_a.force_authenticate(user=self.user_a)
+        sub_a = ensure_subscription(self.user_a)
+        sub_a.plan_code = "creator"
+        sub_a.save()
 
         self.client_b = APIClient()
         self.user_b = User.objects.create_user(username="bob", email="bob@test.com", password="Password123!")
         self.client_b.force_authenticate(user=self.user_b)
+        sub_b = ensure_subscription(self.user_b)
+        sub_b.plan_code = "creator"
+        sub_b.save()
 
         self.client_c = APIClient()
         self.user_c = User.objects.create_user(username="charlie", email="charlie@test.com", password="Password123!")

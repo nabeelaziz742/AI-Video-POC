@@ -8,6 +8,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from .billing import ensure_subscription, get_plan
 from .models import Workspace, WorkspaceMembership
 from .serializers import WorkspaceMembershipSerializer, WorkspaceSerializer
 from .workspaces import (
@@ -36,6 +37,23 @@ class WorkspaceListCreateView(APIView):
             return Response({"detail": "Workspace name is required."}, status=status.HTTP_400_BAD_REQUEST)
         if len(name) > 100:
             return Response({"detail": "Workspace name cannot exceed 100 characters."}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Enforce plan workspace limits
+        subscription = ensure_subscription(request.user)
+        plan = get_plan(subscription.plan_code)
+        owned_custom_workspaces = Workspace.objects.filter(owner=request.user, is_personal=False).count()
+        # Personal workspace is 1; additional custom workspaces allowed by plan
+        max_custom = max(0, plan.max_workspaces - 1)
+        if owned_custom_workspaces >= max_custom and plan.max_workspaces <= 1:
+            return Response(
+                {"detail": f"Your {plan.name} plan does not support creating additional team workspaces. Upgrade your plan to create team workspaces."},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        elif owned_custom_workspaces >= plan.max_workspaces:
+            return Response(
+                {"detail": f"Your {plan.name} plan supports up to {plan.max_workspaces} workspaces. Upgrade your plan to create more workspaces."},
+                status=status.HTTP_403_FORBIDDEN
+            )
 
         with transaction.atomic():
             workspace = Workspace.objects.create(
@@ -117,6 +135,17 @@ class WorkspaceMemberListCreateView(APIView):
         if target_user.pk == workspace.owner_id:
             return Response({"detail": "Workspace owner already has full access."}, status=status.HTTP_400_BAD_REQUEST)
 
+        # Enforce plan team member limits for new memberships
+        if not workspace.memberships.filter(user=target_user).exists():
+            owner_sub = ensure_subscription(workspace.owner)
+            plan = get_plan(owner_sub.plan_code)
+            current_members_count = workspace.memberships.count()
+            if current_members_count >= plan.max_team_members:
+                return Response(
+                    {"detail": f"Your {plan.name} plan supports up to {plan.max_team_members} team member(s). Upgrade your plan to invite more members."},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+
         with transaction.atomic():
             membership, created = WorkspaceMembership.objects.get_or_create(
                 workspace=workspace,
@@ -128,6 +157,7 @@ class WorkspaceMemberListCreateView(APIView):
                 membership.save(update_fields=["role", "updated_at"])
 
         return Response(WorkspaceMembershipSerializer(membership).data, status=status.HTTP_201_CREATED if created else status.HTTP_200_OK)
+
 
 
 class WorkspaceMemberDetailView(APIView):

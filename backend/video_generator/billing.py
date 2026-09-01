@@ -20,12 +20,74 @@ class Plan:
     monthly_price_usd: Decimal
     monthly_credits: int
     max_duration: int
+    max_team_members: int
+    max_workspaces: int
+    export_quality: str
+    priority_render: bool
+    support_tier: str
 
 
 PLANS = {
-    "free": Plan("free", "Free", Decimal("0"), 10, 10),
-    "creator": Plan("creator", "Creator", Decimal("9.99"), 500, 30),
-    "pro": Plan("pro", "Pro", Decimal("24.99"), 1500, 60),
+    "free": Plan(
+        code="free",
+        name="Free",
+        monthly_price_usd=Decimal("0"),
+        monthly_credits=10,
+        max_duration=10,
+        max_team_members=1,
+        max_workspaces=1,
+        export_quality="SD",
+        priority_render=False,
+        support_tier="community",
+    ),
+    "creator": Plan(
+        code="creator",
+        name="Creator",
+        monthly_price_usd=Decimal("29.00"),
+        monthly_credits=150,
+        max_duration=30,
+        max_team_members=3,
+        max_workspaces=3,
+        export_quality="HD",
+        priority_render=False,
+        support_tier="standard",
+    ),
+    "studio": Plan(
+        code="studio",
+        name="Studio",
+        monthly_price_usd=Decimal("99.00"),
+        monthly_credits=600,
+        max_duration=60,
+        max_team_members=10,
+        max_workspaces=10,
+        export_quality="4K",
+        priority_render=True,
+        support_tier="priority",
+    ),
+    "pro": Plan(  # Alias/backwards compat for pro
+        code="pro",
+        name="Pro",
+        monthly_price_usd=Decimal("99.00"),
+        monthly_credits=600,
+        max_duration=60,
+        max_team_members=10,
+        max_workspaces=10,
+        export_quality="4K",
+        priority_render=True,
+        support_tier="priority",
+    ),
+    "enterprise": Plan(
+        code="enterprise",
+        name="Enterprise",
+        monthly_price_usd=Decimal("499.00"),
+        monthly_credits=5000,
+        max_duration=60,
+        max_team_members=999999,
+        max_workspaces=999999,
+        export_quality="4K",
+        priority_render=True,
+        support_tier="dedicated",
+    ),
 }
 
 
@@ -126,7 +188,7 @@ def _unix_datetime(value):
     return timezone.datetime.fromtimestamp(int(value), tz=timezone.utc) if value else None
 
 
-def handle_stripe_event(event: dict):
+def handle_stripe_event(event: dict) -> bool:
     event_id = event.get("id")
     event_type = event.get("type", "")
     payload = event.get("data", {}).get("object", {})
@@ -139,11 +201,12 @@ def handle_stripe_event(event: dict):
         if existing:
             return False
         BillingEvent.objects.create(event_id=event_id, event_type=event_type, payload_hash=payload_hash)
+        
         if event_type == "checkout.session.completed":
             user_id = payload.get("metadata", {}).get("user_id") or payload.get("client_reference_id")
             plan_code = payload.get("metadata", {}).get("plan_code")
             if user_id and plan_code in PLANS:
-                subscription = Subscription.objects.select_for_update().get(user_id=int(user_id))
+                subscription, _ = Subscription.objects.select_for_update().get_or_create(user_id=int(user_id))
                 subscription.plan_code = plan_code
                 subscription.status = Subscription.Status.ACTIVE
                 subscription.provider = "stripe"
@@ -151,6 +214,38 @@ def handle_stripe_event(event: dict):
                 subscription.provider_subscription_id = payload.get("subscription") or subscription.provider_subscription_id
                 subscription.save()
                 apply_plan_allowance(subscription.user, plan_code, grant=True, idempotency_key=f"stripe:checkout:{event_id}")
+        
+        elif event_type in {"customer.subscription.created", "customer.subscription.updated"}:
+            subscription_id = payload.get("id")
+            subscription = Subscription.objects.select_for_update().filter(provider_subscription_id=subscription_id).first()
+            if not subscription:
+                customer_id = payload.get("customer")
+                if customer_id:
+                    subscription = Subscription.objects.select_for_update().filter(provider_customer_id=customer_id).first()
+            if subscription:
+                status_map = {
+                    "active": Subscription.Status.ACTIVE,
+                    "trialing": Subscription.Status.TRIALING,
+                    "past_due": Subscription.Status.PAST_DUE,
+                    "canceled": Subscription.Status.CANCELLED,
+                    "unpaid": Subscription.Status.PAST_DUE,
+                }
+                subscription.status = status_map.get(payload.get("status"), subscription.status)
+                subscription.provider_subscription_id = subscription_id or subscription.provider_subscription_id
+                subscription.cancel_at_period_end = bool(payload.get("cancel_at_period_end", subscription.cancel_at_period_end))
+                subscription.current_period_start = _unix_datetime(payload.get("current_period_start"))
+                subscription.current_period_end = _unix_datetime(payload.get("current_period_end"))
+                subscription.save()
+
+        elif event_type == "customer.subscription.deleted":
+            subscription_id = payload.get("id")
+            subscription = Subscription.objects.select_for_update().filter(provider_subscription_id=subscription_id).first()
+            if subscription:
+                subscription.status = Subscription.Status.CANCELLED
+                subscription.plan_code = Subscription.Plan.FREE
+                subscription.save(update_fields=["status", "plan_code", "updated_at"])
+                apply_plan_allowance(subscription.user, Subscription.Plan.FREE, grant=False)
+
         elif event_type in {"invoice.paid", "invoice.payment_succeeded"}:
             subscription_id = payload.get("subscription")
             subscription = Subscription.objects.select_for_update().filter(provider_subscription_id=subscription_id).first()
@@ -158,20 +253,13 @@ def handle_stripe_event(event: dict):
                 subscription.status = Subscription.Status.ACTIVE
                 subscription.save(update_fields=["status", "updated_at"])
                 apply_plan_allowance(subscription.user, subscription.plan_code, grant=True, idempotency_key=f"stripe:invoice:{event_id}")
+
         elif event_type == "invoice.payment_failed":
             subscription_id = payload.get("subscription")
             subscription = Subscription.objects.select_for_update().filter(provider_subscription_id=subscription_id).first()
             if subscription:
                 subscription.status = Subscription.Status.PAST_DUE
                 subscription.save(update_fields=["status", "updated_at"])
-        elif event_type in {"customer.subscription.updated", "customer.subscription.deleted"}:
-            subscription_id = payload.get("id")
-            subscription = Subscription.objects.select_for_update().filter(provider_subscription_id=subscription_id).first()
-            if subscription:
-                status_map = {"active": Subscription.Status.ACTIVE, "trialing": Subscription.Status.TRIALING, "past_due": Subscription.Status.PAST_DUE, "canceled": Subscription.Status.CANCELLED, "unpaid": Subscription.Status.PAST_DUE}
-                subscription.status = status_map.get(payload.get("status"), Subscription.Status.CANCELLED if event_type.endswith("deleted") else subscription.status)
-                subscription.cancel_at_period_end = bool(payload.get("cancel_at_period_end", subscription.cancel_at_period_end))
-                subscription.current_period_start = _unix_datetime(payload.get("current_period_start"))
-                subscription.current_period_end = _unix_datetime(payload.get("current_period_end"))
-                subscription.save()
+
         return True
+

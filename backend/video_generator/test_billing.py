@@ -41,7 +41,7 @@ class BillingLifecycleTests(TestCase):
         self.subscription.refresh_from_db()
         self.assertEqual(self.subscription.plan_code, "creator")
         self.assertEqual(self.subscription.provider_subscription_id, "sub_1")
-        self.assertEqual(CreditAccount.objects.get(user=self.user).balance, 500)
+        self.assertEqual(CreditAccount.objects.get(user=self.user).balance, 150)
         self.assertFalse(handle_stripe_event(event))
         self.assertEqual(BillingEvent.objects.count(), 1)
         self.assertEqual(CreditTransaction.objects.filter(kind=CreditTransaction.Kind.GRANT).count(), 1)
@@ -55,7 +55,7 @@ class BillingLifecycleTests(TestCase):
         self.assertTrue(handle_stripe_event(event))
         self.assertFalse(handle_stripe_event(event))
         account = CreditAccount.objects.get(user=self.user)
-        self.assertEqual(account.balance, 500)
+        self.assertEqual(account.balance, 150)
         self.assertEqual(CreditTransaction.objects.filter(kind=CreditTransaction.Kind.GRANT).count(), 1)
 
     def test_payment_failed_marks_past_due(self):
@@ -68,7 +68,7 @@ class BillingLifecycleTests(TestCase):
         self.assertEqual(self.subscription.status, Subscription.Status.PAST_DUE)
 
     def test_subscription_deleted_cancels_locally(self):
-        self.subscription.plan_code = Subscription.Plan.PRO
+        self.subscription.plan_code = Subscription.Plan.STUDIO
         self.subscription.provider_subscription_id = "sub_deleted"
         self.subscription.provider = "stripe"
         self.subscription.status = Subscription.Status.ACTIVE
@@ -89,7 +89,7 @@ class BillingApiTests(TestCase):
     def test_plans_are_exposed(self):
         response = self.client.get("/api/video/billing/plans/")
         self.assertEqual(response.status_code, 200)
-        self.assertEqual({p["code"] for p in response.data["plans"]}, {"free", "creator", "pro"})
+        self.assertEqual({p["code"] for p in response.data["plans"]}, {"free", "creator", "studio", "enterprise"})
 
     def test_subscription_defaults_to_free_and_grants_free_allowance(self):
         response = self.client.get("/api/video/billing/subscription/")
@@ -101,17 +101,17 @@ class BillingApiTests(TestCase):
     @patch("video_generator.billing_views.create_checkout_session", return_value="https://checkout.stripe.test/session")
     @patch("video_generator.billing_views.stripe_configured", return_value=True)
     def test_paid_change_returns_checkout_without_activating_plan(self, configured, checkout):
-        response = self.client.post("/api/video/billing/subscription/change/", {"plan_code": "pro"}, format="json")
+        response = self.client.post("/api/video/billing/subscription/change/", {"plan_code": "studio"}, format="json")
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.data["checkout_url"], "https://checkout.stripe.test/session")
         self.assertEqual(Subscription.objects.get(user=self.user).plan_code, "free")
-        checkout.assert_called_once_with(self.user, "pro")
+        checkout.assert_called_once_with(self.user, "studio")
 
     @patch("video_generator.billing_views.cancel_paid_subscription", return_value=True)
     @patch("video_generator.billing_views.stripe_configured", return_value=True)
     def test_paid_to_free_schedules_provider_cancellation_without_local_downgrade(self, configured, cancel):
         subscription = Subscription.objects.get(user=self.user)
-        subscription.plan_code = Subscription.Plan.PRO
+        subscription.plan_code = Subscription.Plan.STUDIO
         subscription.provider = "stripe"
         subscription.provider_subscription_id = "sub_existing"
         subscription.status = Subscription.Status.ACTIVE
@@ -120,14 +120,15 @@ class BillingApiTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertTrue(response.data["cancel_at_period_end"])
         subscription.refresh_from_db()
-        self.assertEqual(subscription.plan_code, Subscription.Plan.PRO)
+        self.assertEqual(subscription.plan_code, Subscription.Plan.STUDIO)
         cancel.assert_called_once_with(self.user)
 
     def test_paid_change_is_safe_without_payment_provider(self):
-        response = self.client.post("/api/video/billing/subscription/change/", {"plan_code": "pro"}, format="json")
+        response = self.client.post("/api/video/billing/subscription/change/", {"plan_code": "studio"}, format="json")
         self.assertEqual(response.status_code, 503)
-        self.assertFalse(Subscription.objects.filter(user=self.user, plan_code="pro").exists())
+        self.assertFalse(Subscription.objects.filter(user=self.user, plan_code="studio").exists())
 
     def test_unknown_plan_rejected(self):
-        response = self.client.post("/api/video/billing/subscription/change/", {"plan_code": "enterprise"}, format="json")
+        response = self.client.post("/api/video/billing/subscription/change/", {"plan_code": "nonexistent_plan"}, format="json")
         self.assertEqual(response.status_code, 400)
+
