@@ -44,8 +44,11 @@ class FalPixVerseC1Provider(VideoProvider):
     endpoint = "fal-ai/pixverse/c1/reference-to-video"
 
     def __init__(self):
-        if not os.getenv("FAL_KEY"):
+        from django.conf import settings
+        key = os.getenv("FAL_KEY") or getattr(settings, "FAL_KEY", None)
+        if not key:
             raise VideoProviderError("FAL_KEY is not configured.")
+
 
     @staticmethod
     def _validate(duration, aspect_ratio, references):

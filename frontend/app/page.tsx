@@ -3,7 +3,8 @@
 import { FormEvent, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { api, InputType, User, VideoProject, VideoScene } from "./api";
+import { api, InputType, User, VideoJob, VideoProject } from "./api";
+
 import { CharacterDraft, emptyCharacter } from "./character-types";
 import { CharacterEditor } from "./components/CharacterEditor";
 import { FinalVideo } from "./components/FinalVideo";
@@ -39,8 +40,9 @@ export default function Home() {
   const [showAdvancedControl, setShowAdvancedControl] = useState(false);
   const [versionsDrawerOpen, setVersionsDrawerOpen] = useState(false);
 
-  // Project & Pipeline State
+  // Project & Job Pipeline State
   const [project, setProject] = useState<VideoProject | null>(null);
+  const [currentJob, setCurrentJob] = useState<VideoJob | null>(null);
   const [busy, setBusy] = useState(false);
   const [busySceneId, setBusySceneId] = useState<number | null>(null);
   const [progress, setProgress] = useState("Ready");
@@ -78,44 +80,60 @@ export default function Home() {
     }
   }, []);
 
-  async function waitForScene(projectId: number, sceneId: number) {
+  async function pollJob(jobId: number, projectId: number) {
     for (;;) {
-      const scene = await api<VideoScene>(`/projects/${projectId}/scenes/${sceneId}/status/`);
-      setProject((current) =>
-        current ? { ...current, scenes: current.scenes.map((item) => (item.id === scene.id ? scene : item)) } : current
-      );
-      if (scene.status === "completed") return scene;
-      if (scene.status === "failed") {
-        throw new Error(scene.error_message || `Scene ${scene.scene_number} generation failed.`);
+      const job = await api<VideoJob>(`/jobs/${jobId}/`);
+      setCurrentJob(job);
+
+      // Fetch refreshed project status to update scene clips & characters in real time
+      try {
+        const p = await api<VideoProject>(`/projects/${projectId}/status/`);
+        setProject(p);
+      } catch {
+        // Ignore transient status errors
       }
-      await new Promise((resolve) => setTimeout(resolve, 4000));
+
+      if (job.status === "completed") {
+        setProgress("Video Ready");
+        return job;
+      }
+      if (job.status === "failed") {
+        throw new Error(job.error_message || "Video generation encountered an error.");
+      }
+      if (job.status === "cancelled") {
+        throw new Error("Job was cancelled by user.");
+      }
+
+      // Map progress text based on current stage
+      if (job.current_stage === "character_reference") {
+        setProgress("Generating character consistency references…");
+      } else if (job.current_stage === "generating_scenes") {
+        setProgress(`Generating scene clips (${job.completed_scenes}/${job.total_scenes})…`);
+      } else if (job.current_stage === "assembling") {
+        setProgress("Assembling and rendering final movie (JSON2Video)…");
+      } else {
+        setProgress("Processing video generation job…");
+      }
+
+      await new Promise((resolve) => setTimeout(resolve, 2500));
     }
   }
 
-  async function runGeneration(created: VideoProject) {
-    let current = created;
-    setProgress("Creating character reference sheets…");
-    for (const character of current.characters) {
-      if (!character.reference_image_url) {
-        await api(`/projects/${current.id}/characters/${character.id}/reference/`, { method: "POST" });
-      }
-      current = await api<VideoProject>(`/projects/${current.id}/status/`);
-      setProject(current);
+  async function cancelCurrentJob() {
+    if (!currentJob) return;
+    try {
+      const cancelled = await api<VideoJob>(`/jobs/${currentJob.id}/cancel/`, { method: "POST" });
+      setCurrentJob(cancelled);
+      setProgress("Job Cancelled");
+      setToastType("info");
+      setToastMessage("Generation cancelled. Credits refunded.");
+      api<{ user: User }>("/auth/me/").then((d) => setUser(d.user)).catch(() => null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Unable to cancel job.");
+    } finally {
+      setBusy(false);
+      setBusySceneId(null);
     }
-
-    for (let index = 0; index < current.scenes.length; index += 1) {
-      const scene = current.scenes[index];
-      setProgress(`Generating Scene ${index + 1} of ${current.scenes.length}…`);
-      await api(`/projects/${current.id}/scenes/${scene.id}/generate/`, { method: "POST" });
-      await waitForScene(current.id, scene.id);
-      current = await api<VideoProject>(`/projects/${current.id}/status/`);
-      setProject(current);
-    }
-
-    setProgress("Stitching and assembling final video…");
-    current = await api<VideoProject>(`/projects/${current.id}/assemble/`, { method: "POST" });
-    setProject(current);
-    setProgress("Rendering final video…");
   }
 
   async function generateVideo(event: FormEvent) {
@@ -137,6 +155,7 @@ export default function Home() {
 
     setBusy(true);
     setError("");
+    setProgress("Submitting generation job…");
 
     try {
       let activeProject: VideoProject;
@@ -148,13 +167,12 @@ export default function Home() {
         duration,
       };
 
-      // Only pass custom characters if paid user opted into Advanced Character Control
       if (isPaidUser && showAdvancedControl && characters.length > 0) {
         payload.characters = characters;
       }
 
       // If a completed/failed project already exists, branch a clean new version
-      if (project && (project.status === "completed" || project.status === "failed")) {
+      if (project && (project.status === "completed" || project.status === "failed" || project.status === "cancelled")) {
         setProgress("Creating new video version…");
         activeProject = await api<VideoProject>(`/projects/${project.id}/versions/`, {
           method: "POST",
@@ -178,7 +196,21 @@ export default function Home() {
       }
 
       setProject(activeProject);
-      await runGeneration(activeProject);
+
+      // Create and dispatch asynchronous VideoJob
+      setProgress("Starting AI video pipeline…");
+      const job = await api<VideoJob>("/jobs/", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          project_id: activeProject.id,
+          job_type: "full_generation",
+        }),
+      });
+
+      setCurrentJob(job);
+      await pollJob(job.id, activeProject.id);
+
       setProgress("Video Ready");
       setToastType("success");
       setToastMessage(
@@ -201,14 +233,23 @@ export default function Home() {
     if (!project || busySceneId) return;
     setBusySceneId(sceneId);
     setError("");
+    setProgress(`Regenerating Scene…`);
     try {
-      await api<VideoScene>(`/projects/${project.id}/scenes/${sceneId}/regenerate/`, { method: "POST" });
-      await waitForScene(project.id, sceneId);
-      const assembled = await api<VideoProject>(`/projects/${project.id}/assemble/`, { method: "POST" });
-      setProject(assembled);
-      setProgress("Rendering final video…");
+      const job = await api<VideoJob>("/jobs/", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          project_id: project.id,
+          job_type: "scene_regeneration",
+          scene_id: sceneId,
+        }),
+      });
+      setCurrentJob(job);
+      await pollJob(job.id, project.id);
+      setProgress("Video Ready");
       setToastType("success");
-      setToastMessage(`Scene regenerated successfully!`);
+      setToastMessage("Scene regenerated and movie updated successfully!");
+      api<{ user: User }>("/auth/me/").then((d) => setUser(d.user)).catch(() => null);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Scene regeneration failed.");
       setProgress("Failed");
@@ -247,6 +288,7 @@ export default function Home() {
       promptInputRef.current.scrollIntoView({ behavior: "smooth", block: "center" });
     }
   }
+
 
   // Polling for assembly status if processing
   useEffect(() => {
@@ -765,17 +807,36 @@ export default function Home() {
 
             <ProgressPanel
               project={project}
+              job={currentJob}
               progress={progress}
               onRegenerate={regenerateScene}
               busySceneId={busySceneId}
               isGenerating={busy}
+              onCancel={cancelCurrentJob}
               onRetry={() => {
                 if (project) {
                   setBusy(true);
-                  runGeneration(project).finally(() => setBusy(false));
+                  setError("");
+                  api<VideoJob>("/jobs/", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                      project_id: project.id,
+                      job_type: "full_generation",
+                    }),
+                  })
+                    .then((job) => {
+                      setCurrentJob(job);
+                      return pollJob(job.id, project.id);
+                    })
+                    .catch((err) => {
+                      setError(err instanceof Error ? err.message : "Retry failed.");
+                    })
+                    .finally(() => setBusy(false));
                 }
               }}
             />
+
 
             <FinalVideo
               project={project}

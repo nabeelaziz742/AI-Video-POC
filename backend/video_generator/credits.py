@@ -137,8 +137,74 @@ def refund_transaction(*, reservation_key: str, idempotency_key: str) -> int:
         return reservation.amount
 
 
-def refund_generation(project: VideoProject, *, idempotency_key: str) -> int:
-    reservation = CreditTransaction.objects.filter(project=project, kind=CreditTransaction.Kind.RESERVE).order_by("-created_at").first()
-    if not reservation:
+CHARACTER_REFERENCE_COST = 5
+ASSEMBLY_COST = 5
+
+
+def reserve_job_credits(job) -> int:
+    """
+    Atomically reserves credits for a VideoJob based on its type and target:
+    - Full generation: charges generation_cost(project.duration)
+    - Scene regeneration: charges generation_cost(target_scene.duration)
+    - Assembly: charges ASSEMBLY_COST
+    """
+    if job.credits_reserved > 0 and job.reservation_key:
+        return job.credits_reserved
+
+    if job.job_type == "scene_regeneration" and job.target_scene:
+        cost = generation_cost(job.target_scene.duration)
+    elif job.job_type == "assembly":
+        cost = ASSEMBLY_COST
+    else:
+        cost = generation_cost(job.project.duration)
+
+    if cost <= 0:
+        cost = 10
+
+    reservation_key = f"video-job:{job.id}:{job.retry_count}"
+    reserve_credits(
+        user=job.user,
+        amount=cost,
+        idempotency_key=reservation_key,
+        project=job.project,
+        workspace=job.workspace,
+        note=f"Video Job #{job.id} ({job.job_type})"
+    )
+    job.reservation_key = reservation_key
+    job.credits_reserved = cost
+    job.save(update_fields=["reservation_key", "credits_reserved", "updated_at"])
+    return cost
+
+
+def consume_job_credits(job) -> int:
+    """
+    Marks the reserved credits for a VideoJob as consumed and writes an immutable UsageEvent.
+    """
+    if not job.reservation_key or job.credits_reserved <= 0:
         return 0
-    return refund_transaction(reservation_key=reservation.idempotency_key, idempotency_key=idempotency_key)
+
+    kind = UsageEvent.Kind.SCENE if job.job_type == "scene_regeneration" else UsageEvent.Kind.PROJECT
+    record_usage(
+        user=job.user,
+        kind=kind,
+        credits=job.credits_reserved,
+        idempotency_key=f"usage:{job.reservation_key}",
+        project=job.project,
+        scene=job.target_scene,
+    )
+    job.credits_consumed = job.credits_reserved
+    job.save(update_fields=["credits_consumed", "updated_at"])
+    return job.credits_consumed
+
+
+def refund_job_credits(job) -> int:
+    """
+    Releases/refunds reserved credits if a job terminates abnormally (failed or cancelled).
+    """
+    if not job.reservation_key or job.credits_reserved <= 0:
+        return 0
+    return refund_transaction(
+        reservation_key=job.reservation_key,
+        idempotency_key=f"refund:{job.reservation_key}",
+    )
+

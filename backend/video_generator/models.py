@@ -66,7 +66,7 @@ class VideoProject(models.Model):
         STORY = "story", "Story"
         SCRIPT = "script", "Script"
     class Status(models.TextChoices):
-        DRAFT="draft","Draft"; QUEUED="queued","Queued"; PROCESSING="processing","Processing"; COMPLETED="completed","Completed"; FAILED="failed","Failed"
+        DRAFT="draft","Draft"; QUEUED="queued","Queued"; PROCESSING="processing","Processing"; COMPLETED="completed","Completed"; FAILED="failed","Failed"; CANCELLED="cancelled","Cancelled"
     user=models.ForeignKey(settings.AUTH_USER_MODEL,related_name="video_projects",on_delete=models.CASCADE,null=True,blank=True)
     workspace=models.ForeignKey(Workspace,related_name="projects",on_delete=models.CASCADE,null=True,blank=True,db_index=True)
     version_group=models.UUIDField(default=uuid.uuid4,editable=False,db_index=True)
@@ -98,7 +98,7 @@ class Character(models.Model):
     def __str__(self): return f"{self.name} — {self.project.title}"
 
 class VideoScene(models.Model):
-    class Status(models.TextChoices): PLANNED="planned","Planned"; PROCESSING="processing","Processing"; COMPLETED="completed","Completed"; FAILED="failed","Failed"
+    class Status(models.TextChoices): PLANNED="planned","Planned"; PROCESSING="processing","Processing"; COMPLETED="completed","Completed"; FAILED="failed","Failed"; CANCELLED="cancelled","Cancelled"
     project=models.ForeignKey(VideoProject,related_name="scenes",on_delete=models.CASCADE); scene_number=models.PositiveIntegerField(); duration=models.PositiveIntegerField(); prompt=models.TextField(); characters=models.ManyToManyField(Character,related_name="scenes",blank=True); status=models.CharField(max_length=20,choices=Status.choices,default=Status.PLANNED,db_index=True); provider=models.CharField(max_length=50,default="pending"); provider_project_id=models.CharField(max_length=120,blank=True,null=True,db_index=True); video_url=models.URLField(blank=True,null=True); error_message=models.TextField(blank=True,null=True); generation_attempt=models.PositiveIntegerField(default=0); processing_started_at=models.DateTimeField(blank=True,null=True); completed_at=models.DateTimeField(blank=True,null=True); failed_at=models.DateTimeField(blank=True,null=True); created_at=models.DateTimeField(auto_now_add=True)
     class Meta: ordering=["scene_number"]; constraints=[models.UniqueConstraint(fields=["project","scene_number"],name="unique_project_scene_number")]
     def __str__(self): return f"{self.project.title} — Scene {self.scene_number}"
@@ -162,3 +162,58 @@ class EmailVerificationToken(models.Model):
     def is_valid(self):
         from django.utils import timezone
         return self.used_at is None and timezone.now() < self.expires_at
+
+
+class VideoJob(models.Model):
+    class Status(models.TextChoices):
+        QUEUED = "queued", "Queued"
+        PROCESSING = "processing", "Processing"
+        ASSEMBLING = "assembling", "Assembling"
+        COMPLETED = "completed", "Completed"
+        FAILED = "failed", "Failed"
+        CANCELLED = "cancelled", "Cancelled"
+
+    class JobType(models.TextChoices):
+        FULL_GENERATION = "full_generation", "Full Generation"
+        SCENE_REGENERATION = "scene_regeneration", "Scene Regeneration"
+        ASSEMBLY = "assembly", "Assembly"
+
+    project = models.ForeignKey(VideoProject, related_name="jobs", on_delete=models.CASCADE, db_index=True)
+    workspace = models.ForeignKey(Workspace, related_name="video_jobs", on_delete=models.CASCADE, null=True, blank=True, db_index=True)
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, related_name="video_jobs", on_delete=models.CASCADE, db_index=True)
+    job_type = models.CharField(max_length=30, choices=JobType.choices, default=JobType.FULL_GENERATION, db_index=True)
+    status = models.CharField(max_length=20, choices=Status.choices, default=Status.QUEUED, db_index=True)
+    current_stage = models.CharField(max_length=50, default="queued")
+
+    total_scenes = models.PositiveIntegerField(default=0)
+    completed_scenes = models.PositiveIntegerField(default=0)
+    progress_percent = models.PositiveIntegerField(default=0)
+
+    provider = models.CharField(max_length=50, default="fal_pixverse_c1")
+    provider_job_id = models.CharField(max_length=120, blank=True, null=True, db_index=True)
+    video_url = models.URLField(blank=True, null=True)
+    error_message = models.TextField(blank=True, null=True)
+
+    reservation_key = models.CharField(max_length=160, blank=True, null=True, db_index=True)
+    credits_reserved = models.PositiveIntegerField(default=0)
+    credits_consumed = models.PositiveIntegerField(default=0)
+
+    target_scene = models.ForeignKey(VideoScene, related_name="regeneration_jobs", on_delete=models.SET_NULL, null=True, blank=True)
+    retry_count = models.PositiveIntegerField(default=0)
+    max_retries = models.PositiveIntegerField(default=2)
+
+    metadata = models.JSONField(default=dict, blank=True)
+
+    queued_at = models.DateTimeField(auto_now_add=True, db_index=True)
+    started_at = models.DateTimeField(null=True, blank=True)
+    completed_at = models.DateTimeField(null=True, blank=True)
+    failed_at = models.DateTimeField(null=True, blank=True)
+    cancelled_at = models.DateTimeField(null=True, blank=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-queued_at"]
+
+    def __str__(self):
+        return f"Job #{self.id} ({self.job_type}) - {self.status} [{self.project.title}]"
+

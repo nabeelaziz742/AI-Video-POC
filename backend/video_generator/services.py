@@ -7,13 +7,15 @@ class JSON2VideoService:
     BASE_URL = "https://api.json2video.com/v2"
 
     def __init__(self):
-        self.api_key = os.getenv("JSON2VIDEO_API_KEY")
+        from django.conf import settings
+        self.api_key = os.getenv("JSON2VIDEO_API_KEY") or getattr(settings, "JSON2VIDEO_API_KEY", None)
         if not self.api_key:
             raise RuntimeError("JSON2VIDEO_API_KEY is not configured.")
         self.headers = {
             "x-api-key": self.api_key,
             "Content-Type": "application/json",
         }
+
 
     def create_movie(self, movie_payload):
         response = requests.post(

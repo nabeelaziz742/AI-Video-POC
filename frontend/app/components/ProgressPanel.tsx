@@ -1,23 +1,27 @@
 "use client";
 
-import { VideoProject, VideoScene, Character } from "../api";
+import { VideoProject, VideoScene, Character, VideoJob } from "../api";
 
 interface ProgressPanelProps {
   project: VideoProject | null;
+  job?: VideoJob | null;
   progress: string;
   onRegenerate: (sceneId: number) => void;
   busySceneId: number | null;
   isGenerating?: boolean;
   onRetry?: () => void;
+  onCancel?: () => void;
 }
 
 export function ProgressPanel({
   project,
+  job,
   progress,
   onRegenerate,
   busySceneId,
   isGenerating = false,
   onRetry,
+  onCancel,
 }: ProgressPanelProps) {
   if (!project) {
     return (
@@ -33,42 +37,54 @@ export function ProgressPanel({
     );
   }
 
-  const isFailed = project.status === "failed";
-  const isCompleted = project.status === "completed";
+  const isJobFailed = job?.status === "failed";
+  const isJobCancelled = job?.status === "cancelled";
+  const isFailed = isJobFailed || isJobCancelled || project.status === "failed" || project.status === "cancelled";
+  const isCompleted = job ? job.status === "completed" : project.status === "completed";
+  const isProcessing = isGenerating || (job ? ["queued", "processing", "assembling"].includes(job.status) : project.status === "processing");
 
-  // Derive real pipeline stages based strictly on real backend state
-  const hasCharacters = Boolean(project.characters && project.characters.length > 0);
-  const allCharactersHaveRefs = hasCharacters && project.characters.every((c) => Boolean(c.reference_image_url));
-  const scenesCount = project.scenes?.length || 0;
-  const completedScenesCount = project.scenes?.filter((s) => s.status === "completed").length || 0;
-  const anySceneProcessing = project.scenes?.some((s) => s.status === "processing");
-  const allScenesCompleted = scenesCount > 0 && completedScenesCount === scenesCount;
-  const isAssembling = project.provider_project_id && project.status === "processing";
+  // Real pipeline stages
+  const scenesCount = project.scenes?.length || job?.total_scenes || 0;
+  const completedScenesCount = project.scenes?.filter((s) => s.status === "completed").length || job?.completed_scenes || 0;
+  const currentStage = job?.current_stage || (isCompleted ? "completed" : isFailed ? "failed" : isProcessing ? "generating_scenes" : "queued");
+  const progressPercent = job?.progress_percent || (isCompleted ? 100 : 0);
 
   const stages = [
     {
-      id: "story",
-      label: "Understanding story",
-      status: scenesCount > 0 ? "done" : isGenerating ? "active" : "pending",
+      id: "queued",
+      label: "Job Queued & Credits Reserved",
+      status: ["starting", "character_reference", "generating_scenes", "assembling", "completed"].includes(currentStage)
+        ? "done"
+        : currentStage === "queued" && isProcessing
+        ? "active"
+        : "pending",
     },
     {
       id: "characters",
-      label: "Creating characters",
-      status: allCharactersHaveRefs ? "done" : isGenerating && scenesCount > 0 ? "active" : "pending",
+      label: "Character Reference Consistency",
+      status: ["generating_scenes", "assembling", "completed"].includes(currentStage)
+        ? "done"
+        : currentStage === "character_reference"
+        ? "active"
+        : "pending",
     },
     {
       id: "scenes",
-      label: `Generating scenes (${completedScenesCount}/${scenesCount})`,
-      status: allScenesCompleted ? "done" : anySceneProcessing || (isGenerating && allCharactersHaveRefs) ? "active" : "pending",
+      label: `Generating Scene Clips (${completedScenesCount}/${scenesCount})`,
+      status: ["assembling", "completed"].includes(currentStage)
+        ? "done"
+        : currentStage === "generating_scenes"
+        ? "active"
+        : "pending",
     },
     {
       id: "assembly",
-      label: "Assembling video",
-      status: isCompleted ? "done" : isAssembling ? "active" : "pending",
+      label: "Multi-Scene Movie Assembly (JSON2Video)",
+      status: currentStage === "completed" ? "done" : currentStage === "assembling" ? "active" : "pending",
     },
     {
       id: "ready",
-      label: "Video Ready",
+      label: "Full Video Ready",
       status: isCompleted ? "done" : "pending",
     },
   ];
@@ -123,7 +139,7 @@ export function ProgressPanel({
               <span className="flex h-3 w-3 items-center justify-center rounded-full bg-red-500 text-[9px] font-bold text-white">
                 !
               </span>
-            ) : isGenerating ? (
+            ) : isProcessing ? (
               <div className="h-2.5 w-2.5 animate-pulse rounded-full bg-violet-400 shadow-sm shadow-violet-400/50" />
             ) : isCompleted ? (
               <div className="h-2.5 w-2.5 rounded-full bg-emerald-400 shadow-sm shadow-emerald-400/50" />
@@ -133,16 +149,43 @@ export function ProgressPanel({
             <p className="text-xs font-semibold text-white">{progress}</p>
           </div>
 
-          <span className="text-[10px] font-medium uppercase tracking-wider text-white/40">
-            V{project.version_number}
-          </span>
+          <div className="flex items-center gap-2">
+            {isProcessing && onCancel && (
+              <button
+                type="button"
+                onClick={onCancel}
+                className="rounded-lg border border-red-500/30 bg-red-500/10 px-2.5 py-1 text-[10px] font-medium text-red-300 transition hover:bg-red-500/20"
+              >
+                Cancel Job
+              </button>
+            )}
+            <span className="text-[10px] font-medium uppercase tracking-wider text-white/40">
+              V{project.version_number}
+            </span>
+          </div>
         </div>
+
+        {/* Live Progress Percentage Bar */}
+        {isProcessing && (
+          <div className="mt-3.5 space-y-1.5">
+            <div className="flex justify-between text-[10px] font-medium text-white/50">
+              <span>Progress</span>
+              <span>{progressPercent}%</span>
+            </div>
+            <div className="h-1.5 w-full overflow-hidden rounded-full bg-white/10">
+              <div
+                className="h-full bg-gradient-to-r from-violet-500 to-indigo-400 transition-all duration-500 ease-out"
+                style={{ width: `${Math.max(5, progressPercent)}%` }}
+              />
+            </div>
+          </div>
+        )}
 
         {/* Failed State Display */}
         {isFailed && (
           <div className="mt-3.5 border-t border-white/5 pt-3">
             <p className="text-xs text-red-300">
-              ❌ {project.error_message || "Generation failed. Credits refunded."}
+              ❌ {job?.error_message || project.error_message || "Generation terminated. Credits refunded."}
             </p>
             {onRetry && (
               <button
@@ -158,10 +201,10 @@ export function ProgressPanel({
       </div>
 
       {/* Real-State Progress Stepper */}
-      {(isGenerating || isCompleted || project.status === "processing") && (
+      {(isProcessing || isCompleted) && (
         <div className="rounded-2xl border border-white/10 bg-black/30 p-4 space-y-2.5">
           <h4 className="text-[11px] font-semibold uppercase tracking-wider text-white/40 mb-3">
-            Generation Stages
+            Pipeline Stages
           </h4>
           {stages.map((st) => (
             <div key={st.id} className="flex items-center gap-3 text-xs">
@@ -193,6 +236,7 @@ export function ProgressPanel({
           ))}
         </div>
       )}
+
 
       {/* Character References Section */}
       {project.characters && project.characters.length > 0 && (

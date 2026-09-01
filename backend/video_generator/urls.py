@@ -29,7 +29,9 @@ from .billing_views import (
     SubscriptionView,
 )
 from .health import HealthCheckView, ReadinessCheckView
+from .job_views import VideoJobCancelView, VideoJobCreateView, VideoJobDetailView
 from .views import (
+
     CreditBalanceView,
     UsageSummaryView,
     VideoProjectCreateView,
@@ -74,7 +76,7 @@ urlpatterns = [
     path("billing/subscription/change/", SubscriptionChangeView.as_view()),
     path("billing/webhook/", BillingWebhookView.as_view()),
 
-    # Projects & Generation
+    # Projects, Jobs & Generation
     path("projects/", VideoProjectCreateView.as_view()),
     path("projects/<int:project_id>/versions/", VideoProjectVersionsView.as_view()),
     path("projects/<int:project_id>/status/", VideoProjectStatusView.as_view()),
@@ -83,6 +85,12 @@ urlpatterns = [
     path("projects/<int:project_id>/scenes/<int:scene_id>/regenerate/", SceneRegenerateView.as_view()),
     path("projects/<int:project_id>/scenes/<int:scene_id>/status/", SceneStatusView.as_view()),
     path("projects/<int:project_id>/assemble/", ProjectAssembleView.as_view()),
+
+    # Async Video Jobs
+    path("jobs/", VideoJobCreateView.as_view()),
+    path("jobs/<int:job_id>/", VideoJobDetailView.as_view()),
+    path("jobs/<int:job_id>/cancel/", VideoJobCancelView.as_view()),
+
 
     # Admin Infrastructure Endpoints
     path("admin/stats/", AdminStatsView.as_view()),

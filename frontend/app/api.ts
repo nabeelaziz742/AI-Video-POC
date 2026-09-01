@@ -1,6 +1,36 @@
 export type InputType = "story" | "script";
-export type SceneStatus = "planned" | "processing" | "completed" | "failed";
-export type ProjectStatus = "draft" | "queued" | "processing" | "completed" | "failed";
+export type SceneStatus = "planned" | "processing" | "completed" | "failed" | "cancelled";
+export type ProjectStatus = "draft" | "queued" | "processing" | "completed" | "failed" | "cancelled";
+export type JobStatus = "queued" | "processing" | "assembling" | "completed" | "failed" | "cancelled";
+
+export interface VideoJob {
+  id: number;
+  project_id: number;
+  workspace_id?: number | null;
+  job_type: "full_generation" | "scene_regeneration" | "assembly";
+  status: JobStatus;
+  current_stage: string;
+  total_scenes: number;
+  completed_scenes: number;
+  progress_percent: number;
+  provider: string;
+  provider_job_id: string | null;
+  video_url: string | null;
+  error_message: string | null;
+  reservation_key?: string | null;
+  credits_reserved: number;
+  credits_consumed: number;
+  target_scene_id?: number | null;
+  retry_count: number;
+  max_retries: number;
+  metadata?: Record<string, unknown>;
+  queued_at: string;
+  started_at: string | null;
+  completed_at: string | null;
+  failed_at: string | null;
+  cancelled_at: string | null;
+  updated_at: string;
+}
 
 export interface User {
   id: number;
@@ -50,6 +80,7 @@ export interface VideoScene {
 export interface VideoProject {
   id: number;
   title: string;
+  workspace_id?: number | null;
   version_group: string;
   version_number: number;
   input_type: InputType;
@@ -67,9 +98,11 @@ export interface VideoProject {
   failed_at: string | null;
   characters: Character[];
   scenes: VideoScene[];
+  latest_job?: VideoJob | null;
   created_at?: string;
   updated_at?: string;
 }
+
 
 export interface CreditBalance {
   balance: number;

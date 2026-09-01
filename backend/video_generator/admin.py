@@ -8,9 +8,11 @@ from .models import (
     UsageEvent,
     VideoProject,
     VideoScene,
+    VideoJob,
     Workspace,
     WorkspaceMembership,
 )
+
 
 @admin.register(Workspace)
 class WorkspaceAdmin(admin.ModelAdmin):
@@ -72,3 +74,11 @@ class BillingEventAdmin(admin.ModelAdmin):
     list_filter=("provider","event_type")
     search_fields=("event_id","event_type","payload_hash")
     readonly_fields=("provider","event_id","event_type","payload_hash","processed_at")
+
+@admin.register(VideoJob)
+class VideoJobAdmin(admin.ModelAdmin):
+    list_display = ("id", "project", "workspace", "user", "job_type", "status", "current_stage", "progress_percent", "queued_at", "completed_at")
+    list_filter = ("status", "job_type", "provider")
+    search_fields = ("project__title", "user__username", "user__email", "provider_job_id", "reservation_key")
+    readonly_fields = ("queued_at", "started_at", "completed_at", "failed_at", "cancelled_at", "updated_at")
+
