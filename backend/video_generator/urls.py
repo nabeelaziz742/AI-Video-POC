@@ -36,6 +36,12 @@ from .views import (
     VideoProjectStatusView,
     VideoProjectVersionsView,
 )
+from .workspace_views import (
+    WorkspaceDetailView,
+    WorkspaceListCreateView,
+    WorkspaceMemberDetailView,
+    WorkspaceMemberListCreateView,
+)
 
 urlpatterns = [
     # Health checks
@@ -51,6 +57,12 @@ urlpatterns = [
     path("auth/login/", LoginView.as_view()),
     path("auth/logout/", LogoutView.as_view()),
     path("auth/me/", MeView.as_view()),
+
+    # Workspaces & Multi-Tenancy
+    path("workspaces/", WorkspaceListCreateView.as_view()),
+    path("workspaces/<int:workspace_id>/", WorkspaceDetailView.as_view()),
+    path("workspaces/<int:workspace_id>/members/", WorkspaceMemberListCreateView.as_view()),
+    path("workspaces/<int:workspace_id>/members/<int:member_id>/", WorkspaceMemberDetailView.as_view()),
 
     # Credits & Usage
     path("credits/", CreditBalanceView.as_view()),

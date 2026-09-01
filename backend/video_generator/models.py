@@ -4,13 +4,89 @@ from django.conf import settings
 from django.db import models
 
 
+class Workspace(models.Model):
+    name = models.CharField(max_length=255)
+    owner = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        related_name="owned_workspaces",
+        on_delete=models.CASCADE,
+    )
+    is_personal = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+
+    def __str__(self):
+        return f"{self.name} ({self.owner.username})"
+
+
+class WorkspaceMembership(models.Model):
+    class Role(models.TextChoices):
+        OWNER = "owner", "Owner"
+        ADMIN = "admin", "Admin"
+        EDITOR = "editor", "Editor"
+        VIEWER = "viewer", "Viewer"
+
+    workspace = models.ForeignKey(
+        Workspace,
+        related_name="memberships",
+        on_delete=models.CASCADE,
+    )
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        related_name="workspace_memberships",
+        on_delete=models.CASCADE,
+    )
+    role = models.CharField(
+        max_length=20,
+        choices=Role.choices,
+        default=Role.VIEWER,
+        db_index=True,
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["created_at"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["workspace", "user"],
+                name="unique_workspace_membership",
+            )
+        ]
+
+    def __str__(self):
+        return f"{self.user.username} - {self.role} @ {self.workspace.name}"
+
+
 class VideoProject(models.Model):
     class InputType(models.TextChoices):
         STORY = "story", "Story"
         SCRIPT = "script", "Script"
     class Status(models.TextChoices):
         DRAFT="draft","Draft"; QUEUED="queued","Queued"; PROCESSING="processing","Processing"; COMPLETED="completed","Completed"; FAILED="failed","Failed"
-    user=models.ForeignKey(settings.AUTH_USER_MODEL,related_name="video_projects",on_delete=models.CASCADE,null=True,blank=True); version_group=models.UUIDField(default=uuid.uuid4,editable=False,db_index=True); version_number=models.PositiveIntegerField(default=1); title=models.CharField(max_length=255); input_type=models.CharField(max_length=20,choices=InputType.choices,default=InputType.STORY); prompt=models.TextField(); aspect_ratio=models.CharField(max_length=10,default="9:16"); duration=models.PositiveIntegerField(default=30); status=models.CharField(max_length=20,choices=Status.choices,default=Status.DRAFT,db_index=True); provider=models.CharField(max_length=50,default="json2video"); provider_project_id=models.CharField(max_length=100,blank=True,null=True); video_url=models.URLField(blank=True,null=True); error_message=models.TextField(blank=True,null=True); generation_attempt=models.PositiveIntegerField(default=0); processing_started_at=models.DateTimeField(blank=True,null=True); completed_at=models.DateTimeField(blank=True,null=True); failed_at=models.DateTimeField(blank=True,null=True); created_at=models.DateTimeField(auto_now_add=True,db_index=True); updated_at=models.DateTimeField(auto_now=True)
+    user=models.ForeignKey(settings.AUTH_USER_MODEL,related_name="video_projects",on_delete=models.CASCADE,null=True,blank=True)
+    workspace=models.ForeignKey(Workspace,related_name="projects",on_delete=models.CASCADE,null=True,blank=True,db_index=True)
+    version_group=models.UUIDField(default=uuid.uuid4,editable=False,db_index=True)
+    version_number=models.PositiveIntegerField(default=1)
+    title=models.CharField(max_length=255)
+    input_type=models.CharField(max_length=20,choices=InputType.choices,default=InputType.STORY)
+    prompt=models.TextField()
+    aspect_ratio=models.CharField(max_length=10,default="9:16")
+    duration=models.PositiveIntegerField(default=30)
+    status=models.CharField(max_length=20,choices=Status.choices,default=Status.DRAFT,db_index=True)
+    provider=models.CharField(max_length=50,default="json2video")
+    provider_project_id=models.CharField(max_length=100,blank=True,null=True)
+    video_url=models.URLField(blank=True,null=True)
+    error_message=models.TextField(blank=True,null=True)
+    generation_attempt=models.PositiveIntegerField(default=0)
+    processing_started_at=models.DateTimeField(blank=True,null=True)
+    completed_at=models.DateTimeField(blank=True,null=True)
+    failed_at=models.DateTimeField(blank=True,null=True)
+    created_at=models.DateTimeField(auto_now_add=True,db_index=True)
+    updated_at=models.DateTimeField(auto_now=True)
     class Meta: ordering=["-created_at"]; constraints=[models.UniqueConstraint(fields=["version_group","version_number"],name="unique_project_version")]
     def __str__(self): return f"{self.title} — V{self.version_number}"
 

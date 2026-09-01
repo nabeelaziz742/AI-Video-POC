@@ -19,6 +19,7 @@ from .credits import get_or_create_credit_account, grant_free_allowance
 from .emails import send_account_verification_email
 from .models import EmailVerificationToken
 from .rate_limit import allow_request, rate_limited_response
+from .workspaces import get_or_create_personal_workspace
 
 
 DISPOSABLE_EMAIL_DOMAINS = {
@@ -42,6 +43,8 @@ class UserSerializer(serializers.ModelSerializer):
     plan_code = serializers.SerializerMethodField()
     credits_balance = serializers.SerializerMethodField()
     email_verified = serializers.SerializerMethodField()
+    workspace_id = serializers.SerializerMethodField()
+    workspace_name = serializers.SerializerMethodField()
 
     class Meta:
         model = User
@@ -56,6 +59,8 @@ class UserSerializer(serializers.ModelSerializer):
             "plan_code",
             "credits_balance",
             "email_verified",
+            "workspace_id",
+            "workspace_name",
         ]
         read_only_fields = [
             "id",
@@ -65,6 +70,8 @@ class UserSerializer(serializers.ModelSerializer):
             "plan_code",
             "credits_balance",
             "email_verified",
+            "workspace_id",
+            "workspace_name",
         ]
 
     def get_plan_code(self, obj):
@@ -77,6 +84,18 @@ class UserSerializer(serializers.ModelSerializer):
 
     def get_email_verified(self, obj):
         return bool(obj.is_active)
+
+    def get_workspace_id(self, obj):
+        if not obj or not obj.is_authenticated:
+            return None
+        ws = get_or_create_personal_workspace(obj)
+        return ws.id if ws else None
+
+    def get_workspace_name(self, obj):
+        if not obj or not obj.is_authenticated:
+            return None
+        ws = get_or_create_personal_workspace(obj)
+        return ws.name if ws else None
 
 
 @method_decorator(ensure_csrf_cookie, name="dispatch")
@@ -206,6 +225,9 @@ class VerifyEmailView(APIView):
 
         user.is_active = True
         user.save(update_fields=["is_active"])
+
+        # Create personal workspace for verified user
+        get_or_create_personal_workspace(user)
 
         # Grant 10 Free credits post-verification (idempotent)
         grant_free_allowance(user)

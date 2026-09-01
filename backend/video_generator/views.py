@@ -1,8 +1,8 @@
 from django.conf import settings
 from django.db import transaction
+from django.db.models import Q, Sum
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
-from django.db.models import Sum
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
@@ -11,19 +11,39 @@ from rest_framework.views import APIView
 from .billing import ensure_subscription, get_plan
 from .character_extraction import extract_characters_from_story
 from .credits import get_or_create_credit_account, refund_transaction
-from .models import Character, CreditTransaction, UsageEvent, VideoProject, VideoScene
+from .models import Character, CreditTransaction, UsageEvent, VideoProject, VideoScene, Workspace, WorkspaceMembership
 from .rate_limit import allow_request, rate_limited_response
 from .scene_planner import build_scene_plan, validate_generation_options
 from .security import validate_safe_url
 from .serializers import VideoProjectSerializer
 from .services import JSON2VideoService
+from .workspaces import (
+    get_or_create_personal_workspace,
+    get_user_workspaces,
+    get_workspace_project_for_user,
+    user_has_workspace_role,
+)
 
 
 class VideoProjectCreateView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        projects = VideoProject.objects.filter(user=request.user).prefetch_related("characters", "scenes").order_by("-created_at")
+        workspace_id = request.query_params.get("workspace_id")
+        if workspace_id:
+            try:
+                target_workspace = Workspace.objects.get(id=int(workspace_id))
+                if not user_has_workspace_role(request.user, target_workspace, min_role=WorkspaceMembership.Role.VIEWER):
+                    return Response([], status=status.HTTP_200_OK)
+                projects = VideoProject.objects.filter(workspace=target_workspace).prefetch_related("characters", "scenes").order_by("-created_at")
+            except (ValueError, Workspace.DoesNotExist):
+                return Response([], status=status.HTTP_200_OK)
+        else:
+            user_workspaces = get_user_workspaces(request.user)
+            # Include projects explicitly assigned to user's workspaces or legacy user projects
+            projects = VideoProject.objects.filter(
+                Q(workspace__in=user_workspaces) | Q(workspace__isnull=True, user=request.user)
+            ).distinct().prefetch_related("characters", "scenes").order_by("-created_at")
         return Response(VideoProjectSerializer(projects, many=True).data)
 
     def post(self, request):
@@ -31,6 +51,20 @@ class VideoProjectCreateView(APIView):
             return rate_limited_response()
         if not request.user.is_active:
             return Response({"detail": "Please verify your email address before generating videos."}, status=status.HTTP_403_FORBIDDEN)
+
+        # Resolve target workspace
+        workspace_id = request.data.get("workspace_id")
+        if workspace_id:
+            try:
+                target_workspace = Workspace.objects.get(id=int(workspace_id))
+            except (ValueError, Workspace.DoesNotExist):
+                return Response({"detail": "Workspace not found."}, status=status.HTTP_404_NOT_FOUND)
+            if not user_has_workspace_role(request.user, target_workspace, min_role=WorkspaceMembership.Role.EDITOR):
+                return Response({"detail": "You do not have permission to create projects in this workspace."}, status=status.HTTP_403_FORBIDDEN)
+            workspace = target_workspace
+        else:
+            workspace = get_or_create_personal_workspace(request.user)
+
         title = str(request.data.get("title", "Untitled Video")).strip() or "Untitled Video"
         prompt = str(request.data.get("prompt", "")).strip()
         input_type = request.data.get("input_type", "story")
@@ -61,7 +95,18 @@ class VideoProjectCreateView(APIView):
         except (TypeError, ValueError) as exc:
             return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
         with transaction.atomic():
-            project = VideoProject.objects.create(user=request.user, title=title, version_number=1, prompt=prompt, input_type=input_type, aspect_ratio=aspect_ratio, duration=duration, status=VideoProject.Status.QUEUED, provider="fal_pixverse_c1")
+            project = VideoProject.objects.create(
+                user=request.user,
+                workspace=workspace,
+                title=title,
+                version_number=1,
+                prompt=prompt,
+                input_type=input_type,
+                aspect_ratio=aspect_ratio,
+                duration=duration,
+                status=VideoProject.Status.QUEUED,
+                provider="fal_pixverse_c1",
+            )
             characters = [Character.objects.create(project=project, name=str(item["name"]).strip(), role=str(item.get("role", "")).strip(), age_description=str(item.get("age_description", "")).strip(), appearance=str(item.get("appearance", "")).strip(), clothing=str(item.get("clothing", "")).strip(), personality=str(item.get("personality", "")).strip(), description=str(item.get("description", "")).strip(), visual_prompt=str(item.get("visual_prompt", "")).strip(), reference_image_url=item.get("reference_image_url") or None) for item in normalized_characters]
             character_block = "\nCharacter continuity: " + "; ".join(character.consistency_prompt for character in characters) + ". Keep recurring characters visually identical across scenes."
             scenes = [VideoScene(project=project, scene_number=scene["scene_number"], duration=scene["duration"], prompt=scene["prompt"] + character_block) for scene in scene_plan]
@@ -97,18 +142,15 @@ class UsageSummaryView(APIView):
 class VideoProjectVersionsView(APIView):
     permission_classes = [IsAuthenticated]
 
-    def get_root_group(self, request, project_id):
-        return get_object_or_404(VideoProject, id=project_id, user=request.user).version_group
-
     def get(self, request, project_id):
-        group = self.get_root_group(request, project_id)
-        versions = VideoProject.objects.filter(user=request.user, version_group=group).prefetch_related("characters", "scenes").order_by("version_number")
+        source = get_workspace_project_for_user(request.user, project_id, min_role=WorkspaceMembership.Role.VIEWER)
+        versions = VideoProject.objects.filter(workspace=source.workspace, version_group=source.version_group).prefetch_related("characters", "scenes").order_by("version_number")
         return Response(VideoProjectSerializer(versions, many=True).data)
 
     def post(self, request, project_id):
         if not request.user.is_active:
             return Response({"detail": "Please verify your email address before generating videos."}, status=status.HTTP_403_FORBIDDEN)
-        source = get_object_or_404(VideoProject.objects.prefetch_related("characters"), id=project_id, user=request.user)
+        source = get_workspace_project_for_user(request.user, project_id, min_role=WorkspaceMembership.Role.EDITOR)
         if not allow_request(request, "version-create", limit=10, window=60):
             return rate_limited_response()
         prompt = str(request.data.get("prompt", source.prompt)).strip()
@@ -150,7 +192,19 @@ class VideoProjectVersionsView(APIView):
             normalized.append({"name": name, **definition, "reference_image_url": old.reference_image_url if same_definition else None})
         with transaction.atomic():
             next_number = VideoProject.objects.select_for_update().filter(version_group=source.version_group).order_by("-version_number").values_list("version_number", flat=True).first() or 0
-            version = VideoProject.objects.create(user=request.user, version_group=source.version_group, version_number=next_number + 1, title=title, input_type=input_type, prompt=prompt, aspect_ratio=aspect_ratio, duration=duration, status=VideoProject.Status.QUEUED, provider="fal_pixverse_c1")
+            version = VideoProject.objects.create(
+                user=request.user,
+                workspace=source.workspace,
+                version_group=source.version_group,
+                version_number=next_number + 1,
+                title=title,
+                input_type=input_type,
+                prompt=prompt,
+                aspect_ratio=aspect_ratio,
+                duration=duration,
+                status=VideoProject.Status.QUEUED,
+                provider="fal_pixverse_c1",
+            )
             characters = [Character.objects.create(project=version, **item) for item in normalized]
             character_block = "\nCharacter continuity: " + "; ".join(c.consistency_prompt for c in characters) + ". Keep recurring characters visually identical across scenes."
             scenes = [VideoScene(project=version, scene_number=item["scene_number"], duration=item["duration"], prompt=item["prompt"] + character_block) for item in scene_plan]
@@ -164,9 +218,7 @@ class VideoProjectStatusView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request, project_id):
-        project = VideoProject.objects.filter(id=project_id, user=request.user).prefetch_related("characters", "scenes").first()
-        if not project:
-            return Response({"detail": "Project not found."}, status=status.HTTP_404_NOT_FOUND)
+        project = get_workspace_project_for_user(request.user, project_id, min_role=WorkspaceMembership.Role.VIEWER)
 
         timeout_seconds = getattr(settings, "PROVIDER_JOB_TIMEOUT_SECONDS", 1800)
         if project.status == VideoProject.Status.PROCESSING and project.processing_started_at:
@@ -209,3 +261,4 @@ class VideoProjectStatusView(APIView):
         project.save(update_fields=["status", "error_message", "failed_at", "updated_at"])
         reservation_key = f"assembly:{project.id}:{project.generation_attempt}"
         refund_transaction(reservation_key=reservation_key, idempotency_key=f"refund:{reservation_key}")
+

@@ -11,13 +11,14 @@ from rest_framework.views import APIView
 from .billing import ensure_subscription, get_plan
 from .character_generation import CharacterGenerationError, generate_character_reference
 from .credits import generation_cost, record_usage, reserve_credits, refund_transaction
-from .models import Character, VideoProject, VideoScene, UsageEvent
+from .models import Character, VideoProject, VideoScene, UsageEvent, WorkspaceMembership
 from .providers import VideoProviderError, get_video_provider
 from .rate_limit import allow_request, rate_limited_response
 from .scene_planner import get_dimensions
 from .security import validate_safe_url
 from .serializers import VideoProjectSerializer, VideoSceneSerializer
 from .services import JSON2VideoService
+from .workspaces import get_workspace_project_for_user
 
 CHARACTER_REFERENCE_COST = 5
 ASSEMBLY_COST = 5
@@ -38,15 +39,15 @@ def _plan_generation_error(user, duration):
 class OwnedProjectMixin:
     permission_classes = [IsAuthenticated]
 
-    def get_project(self, request, project_id):
-        return get_object_or_404(VideoProject, id=project_id, user=request.user)
+    def get_project(self, request, project_id, min_role=WorkspaceMembership.Role.VIEWER):
+        return get_workspace_project_for_user(request.user, project_id, min_role=min_role)
 
 
 class CharacterReferenceView(OwnedProjectMixin, APIView):
     def post(self, request, project_id, character_id):
         if not allow_request(request, "character-reference", limit=10, window=60):
             return rate_limited_response()
-        project = self.get_project(request, project_id)
+        project = self.get_project(request, project_id, min_role=WorkspaceMembership.Role.EDITOR)
         with transaction.atomic():
             character = get_object_or_404(Character.objects.select_for_update(), id=character_id, project=project)
             if character.reference_image_url and not request.data.get("force"):
@@ -74,7 +75,7 @@ class SceneGenerateView(OwnedProjectMixin, APIView):
     def post(self, request, project_id, scene_id):
         if not allow_request(request, "scene-generate", limit=12, window=60):
             return rate_limited_response()
-        project = self.get_project(request, project_id)
+        project = self.get_project(request, project_id, min_role=WorkspaceMembership.Role.EDITOR)
         plan_error = _plan_generation_error(request.user, project.duration)
         if plan_error:
             return Response({"detail": plan_error}, status=status.HTTP_402_PAYMENT_REQUIRED)
@@ -130,7 +131,7 @@ class SceneGenerateView(OwnedProjectMixin, APIView):
 
 class SceneStatusView(OwnedProjectMixin, APIView):
     def get(self, request, project_id, scene_id):
-        project = self.get_project(request, project_id)
+        project = self.get_project(request, project_id, min_role=WorkspaceMembership.Role.VIEWER)
         scene = get_object_or_404(VideoScene, id=scene_id, project=project)
         if not scene.provider_project_id or scene.provider == "pending" or (scene.status == VideoScene.Status.COMPLETED and scene.video_url) or scene.status == VideoScene.Status.FAILED:
             return Response(VideoSceneSerializer(scene).data)
@@ -181,7 +182,7 @@ class SceneStatusView(OwnedProjectMixin, APIView):
 
 class SceneRegenerateView(SceneGenerateView):
     def post(self, request, project_id, scene_id):
-        project = self.get_project(request, project_id)
+        project = self.get_project(request, project_id, min_role=WorkspaceMembership.Role.EDITOR)
         scene = get_object_or_404(VideoScene, id=scene_id, project=project)
         if scene.status == VideoScene.Status.PROCESSING and scene.provider_project_id:
             return Response(VideoSceneSerializer(scene).data, status=status.HTTP_202_ACCEPTED)
@@ -200,8 +201,9 @@ class ProjectAssembleView(OwnedProjectMixin, APIView):
     def post(self, request, project_id):
         if not allow_request(request, "assemble", limit=6, window=60):
             return rate_limited_response()
+        project = self.get_project(request, project_id, min_role=WorkspaceMembership.Role.EDITOR)
         with transaction.atomic():
-            project = get_object_or_404(VideoProject.objects.select_for_update(), id=project_id, user=request.user)
+            project = get_object_or_404(VideoProject.objects.select_for_update(), id=project.id)
             if project.provider_project_id and project.provider == "json2video" and project.status == VideoProject.Status.PROCESSING:
                 return Response(VideoProjectSerializer(project).data, status=status.HTTP_202_ACCEPTED)
             scenes = list(project.scenes.order_by("scene_number"))
@@ -239,3 +241,4 @@ class ProjectAssembleView(OwnedProjectMixin, APIView):
         project.save(update_fields=["provider", "provider_project_id", "status", "error_message", "processing_started_at", "completed_at", "failed_at", "updated_at"])
         record_usage(request.user, kind=UsageEvent.Kind.ASSEMBLY, credits=ASSEMBLY_COST, idempotency_key=f"usage:{charge_key}", project=project)
         return Response(VideoProjectSerializer(project).data, status=status.HTTP_202_ACCEPTED)
+

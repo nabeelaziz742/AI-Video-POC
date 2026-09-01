@@ -1,9 +1,34 @@
 from django.contrib import admin
-from .models import BillingEvent, Character, CreditAccount, CreditTransaction, Subscription, UsageEvent, VideoProject, VideoScene
+from .models import (
+    BillingEvent,
+    Character,
+    CreditAccount,
+    CreditTransaction,
+    Subscription,
+    UsageEvent,
+    VideoProject,
+    VideoScene,
+    Workspace,
+    WorkspaceMembership,
+)
+
+@admin.register(Workspace)
+class WorkspaceAdmin(admin.ModelAdmin):
+    list_display = ("name", "owner", "is_personal", "created_at", "updated_at")
+    list_filter = ("is_personal",)
+    search_fields = ("name", "owner__username", "owner__email")
+    readonly_fields = ("created_at", "updated_at")
+
+@admin.register(WorkspaceMembership)
+class WorkspaceMembershipAdmin(admin.ModelAdmin):
+    list_display = ("workspace", "user", "role", "created_at", "updated_at")
+    list_filter = ("role",)
+    search_fields = ("workspace__name", "user__username", "user__email")
+    readonly_fields = ("created_at", "updated_at")
 
 @admin.register(VideoProject)
 class VideoProjectAdmin(admin.ModelAdmin):
-    list_display=("title","user","version_number","status","duration","aspect_ratio","generation_attempt","created_at","updated_at")
+    list_display = ("title", "workspace", "user", "version_number", "status", "duration", "aspect_ratio", "generation_attempt", "created_at", "updated_at")
     list_filter=("status","input_type","aspect_ratio","duration","provider")
     search_fields=("title","prompt","user__username","user__email")
     readonly_fields=("created_at","updated_at","generation_attempt","processing_started_at","completed_at","failed_at")
